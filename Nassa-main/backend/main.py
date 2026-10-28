@@ -34,7 +34,10 @@ def create_app(settings: Settings | None = None):
         try:
             return displacement(lat, lng)
         except OutsideCoverageError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            msg = str(exc)
+            if "No hay productos" in msg or "Credenciales" in msg or "descarga" in msg.lower():
+                raise HTTPException(status_code=503, detail=msg) from exc
+            raise HTTPException(status_code=404, detail=msg) from exc
 
     @app.get("/")
     def root():
