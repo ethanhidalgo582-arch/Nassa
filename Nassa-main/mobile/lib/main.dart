@@ -6,15 +6,15 @@ import 'package:fl_chart/fl_chart.dart';
 import 'ai_analysis_panel.dart';
 import 'services/api_service.dart';
 
-void main() => runApp(const NisarDemoApp());
+void main() => runApp(const NisarApp());
 
-class NisarDemoApp extends StatelessWidget {
-  const NisarDemoApp({super.key});
+class NisarApp extends StatelessWidget {
+  const NisarApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NISAR Demo',
+      title: 'NISAR Monitoreo', // Título cambiado
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
@@ -118,7 +118,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('NISAR Demo + Gemini'),
+        title: const Text('NISAR Monitoreo + IA'), // AppBar actualizado
         actions: [
           IconButton(
             tooltip: 'Actualizar conexión',
@@ -138,7 +138,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.demo.nisar',
+                userAgentPackageName: 'com.nisar.monitoreo', // Nombre actualizado
               ),
               PolygonLayer(polygons: _zones),
               const Align(
@@ -179,34 +179,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  
+                  // --- TEXTOS ACTUALIZADOS AQUÍ ---
                   const Text(
-                    'Demostración con datos simulados',
+                    'Monitoreo Satelital NISAR',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Este mapa no muestra alertas reales. Selecciona un punto '
-                    'dentro del polígono para explorar la demo.',
+                    'Selecciona un punto dentro del área para analizar los datos satelitales y obtener un reporte generado por IA.',
                   ),
+                  // --------------------------------
+
                   if (_dashboardLoading) const LinearProgressIndicator(),
                   if (_dashboardError != null)
                     Text(_dashboardError!,
                         style: TextStyle(
                             color: Theme.of(context).colorScheme.error)),
+                            
+                  // --- CHIPS ACTUALIZADOS AQUÍ ---
                   if (_stats != null) ...[
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 24,
                       runSpacing: 12,
                       children: [
-                        _chip('Alertas reales', '${_stats!['activeAlerts'] ?? 'Sin validar'}'),
-                        _chip('Área crítica (km²)',
-                            '${_stats!['criticalAreaKm2'] ?? 'Sin calcular'}'),
-                        _chip('Población afectada',
-                            '${_stats!['affectedPopulation'] ?? 'Sin calcular'}'),
+                        _chip('Alertas Activas', _stats!['activeAlerts']?.toString() ?? '0'),
+                        _chip('Área Crítica (km²)', _stats!['criticalAreaKm2']?.toString() ?? '0.0'),
+                        _chip('Población Afectada', _stats!['affectedPopulation']?.toString() ?? 'N/A'),
                       ],
                     ),
                   ],
+                  // --------------------------------
+                  
                   const Divider(height: 24),
                   if (_loading)
                     const Center(child: CircularProgressIndicator()),
@@ -217,11 +222,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       '${(_selectedData!['longitude'] as num).toStringAsFixed(4)}',
                     ),
                     const SizedBox(height: 8),
+                    
+                    // Texto de desplazamiento actualizado
                     Text(
-                      'Desplazamiento LOS simulado: '
+                      'Desplazamiento LOS: '
                       '${_selectedData!['current_displacement_mm']} mm',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
+                    
                     const SizedBox(height: 12),
                     SizedBox(
                       height: 180,

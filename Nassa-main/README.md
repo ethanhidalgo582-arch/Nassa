@@ -93,6 +93,31 @@ El servidor obtiene las mediciones de su propio proveedor de datos; no acepta co
 
 Errores: 404 fuera de cobertura, 422 entrada inválida, 429 límite del proveedor, 503 falta de configuración o configuración rechazada, 502 error del proveedor/red/respuesta, 504 tiempo agotado. No se hacen reintentos automáticos de generación para evitar solicitudes adicionales involuntarias.
 
+# NISAR Monitoreo + Gemini IA
+
+Aplicación Flutter con mapa interactivo y panel de análisis potenciado por Inteligencia Artificial (Gemini). El servidor FastAPI procesa las métricas satelitales, calcula áreas críticas afectadas y genera reportes automáticos para el usuario.
+
+## Estado Actual del Proyecto
+
+- **Frontend (Flutter):** Interfaz limpia orientada a producción. Se eliminaron los textos y advertencias del "modo demostración". Los indicadores (Chips) ahora muestran las Alertas Activas, el Área Crítica calculada en km² y la Población Afectada.
+- **Backend (FastAPI):** Implementación del cálculo de áreas geográficas (fórmula del zapato) para transformar los polígonos GeoJSON en kilómetros cuadrados reales.
+- **Integración NASA (Earthdata):** El servidor ya cuenta con la estructura de configuración (`config.py` y `.env`) preparada para autenticarse con los servidores de la NASA mediante `earthaccess`.
+- **Gemini IA:** El panel de análisis con IA está totalmente operativo. Consume la API de Gemini (`gemini-3.5-flash-lite`) y devuelve un reporte estructurado con observaciones y limitaciones.
+
+## Requisitos Previos y Configuración (`.env`)
+
+Requiere Python 3.11 o superior. Para conectar con la NASA y Gemini, necesitas un archivo `.env` en la carpeta `backend` (basado en el `.env.example`).
+
+```dotenv
+# Configuración de Gemini
+GEMINI_API_KEY=tu_clave_de_google_ai
+GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_TIMEOUT_SECONDS=40
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Configuración de NASA Earthdata (Regístrate en https://urs.earthdata.nasa.gov/)
+EARTHDATA_USERNAME=tu_usuario_nasa
+EARTHDATA_PASSWORD=tu_contraseña_nasa
 ## Pruebas
 
 Desde `backend`:

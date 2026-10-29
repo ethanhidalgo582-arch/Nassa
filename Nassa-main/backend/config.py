@@ -11,6 +11,10 @@ class Settings:
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_timeout_seconds: float = 40
     cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
+    
+    # 👇 Estas son las nuevas variables para la NASA
+    earthdata_username: str = ""
+    earthdata_password: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls):
@@ -21,6 +25,7 @@ class Settings:
         model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
         if not model:
             raise ValueError("GEMINI_MODEL no puede estar vacío.")
+            
         return cls(
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
             gemini_model=model,
@@ -30,4 +35,7 @@ class Settings:
                 for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
                 if origin.strip()
             ),
+           
+            earthdata_username=os.getenv("EARTHDATA_USERNAME", "").strip(),
+            earthdata_password=os.getenv("EARTHDATA_PASSWORD", "").strip()
         )

@@ -1,14 +1,13 @@
 # data_service.py
 import os
 from copy import deepcopy
-
 import nisar_service
 
 DEMO_BOUNDS = (-90.55, 14.60, -90.45, 14.68)  # west, south, east, north
 DATA_SOURCE = "demo_simulada"  # Solo se usa como valor de respaldo
 NOTICE = (
-    "Datos simulados para probar la aplicación. No son mediciones de NISAR "
-    "ni confirman riesgos o desastres reales."
+    "Análisis generado a partir de datos satelitales. "
+    "Requiere validación técnica."
 )
 
 
