@@ -1,0 +1,80 @@
+{
+  "glaciares": {
+    "groenlandia": {
+      "module": "glaciares",
+      "source": "NASA NISAR (Precargado)",
+      "measurement": "Movimiento de masa de hielo (LOS)",
+      "unit": "mm",
+      "mean": -45.2,
+      "mean_coherence": 0.85,
+      "valid_pixels": 1500,
+      "date_a": "2026-06-17",
+      "date_b": "2026-11-12",
+      "chart": [
+        {"label": "Percentil 10", "value": -60.5},
+        {"label": "Mediana", "value": -45.2},
+        {"label": "Percentil 90", "value": -20.1}
+      ],
+      "chart_kind": "spatial_summary",
+      "limitations": ["Movimiento rápido detectado. El hielo fluye hacia el océano.", "Este análisis es una demostración precargada."]
+    },
+    "thwaites": {
+      "module": "glaciares",
+      "source": "NASA NISAR (Precargado)",
+      "measurement": "Movimiento de masa de hielo (LOS)",
+      "unit": "mm",
+      "mean": -78.5,
+      "mean_coherence": 0.72,
+      "valid_pixels": 2200,
+      "date_a": "2026-07-01",
+      "date_b": "2026-11-01",
+      "chart": [
+        {"label": "Percentil 10", "value": -95.0},
+        {"label": "Mediana", "value": -78.5},
+        {"label": "Percentil 90", "value": -40.2}
+      ],
+      "chart_kind": "spatial_summary",
+      "limitations": ["Glaciar crítico. Alto riesgo de desestabilización.", "Este análisis es una demostración precargada."]
+    }
+  },
+  "bosques": {
+    "amazonas": {
+      "module": "bosques",
+      "source": "OpenStreetMap (Precargado)",
+      "measurement": "Superficie cartografiada como bosque",
+      "unit": "ha",
+      "snapshots": [
+        {"date": "2025-11-12", "area_ha": 1500.5, "water_ha": 50.2, "land_ha": 1450.3},
+        {"date": "2026-11-12", "area_ha": 1350.2, "water_ha": 55.1, "land_ha": 1295.1}
+      ],
+      "chart": [
+        {"label": "2025-11-12", "value": 1500.5},
+        {"label": "2026-11-12", "value": 1350.2}
+      ],
+      "delta": -150.3,
+      "limitations": ["Deforestación detectada por pérdida de cartografía OSM.", "Este análisis es una demostración precargada."]
+    }
+  },
+  "hundimiento": {
+    "ciudad_mexico": {
+      "module": "hundimiento",
+      "source": "NASA NISAR (Precargado)",
+      "measurement": "Proyección vertical bajo supuesto (sin validar)",
+      "unit": "mm",
+      "mean": -120.5,
+      "mean_coherence": 0.90,
+      "valid_pixels": 5000,
+      "incidence_deg": 35.0,
+      "incidence_range_deg": [35.0, 35.0],
+      "date_a": "2026-06-17",
+      "date_b": "2026-11-12",
+      "chart": [
+        {"label": "Percentil 10", "value": -150.0},
+        {"label": "Mediana", "value": -120.5},
+        {"label": "Percentil 90", "value": -90.0}
+      ],
+      "chart_kind": "spatial_summary",
+      "limitations": ["Hundimiento severo del suelo.", "Este análisis es una demostración precargada."]
+    }
+  }
+}

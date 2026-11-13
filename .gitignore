@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Entorno y secretos
+.env
+.env.local
+
+# Datos descargados de la NASA (¡Ocupan mucho espacio!)
+backend/data/
+*.h5
+
+# Flutter
+mobile/build/
+mobile/.dart_tool/
