@@ -1,150 +1,151 @@
-from contextlib import asynccontextmanager
-import asyncio, time, uuid
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+"""FastAPI application for the NISAR monitoring app."""
+from datetime import date, datetime
+from pathlib import Path
+from typing import Literal, Optional
+import os
+import time
+import uuid
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
-from config import Settings
-from gemini_service import GeminiService, GeminiServiceError
-from metrics_schemas import MetricsRequest, InterpretRequest
-from schemas import AnalysisRequest
-from analysis_service import calculate, DataUnavailable
+from pydantic import BaseModel, Field
 
-def create_app(settings=None):
-    settings = settings or Settings.from_env()
-    
-    @asynccontextmanager
-    async def lifespan(app):
-        yield
-        await app.state.gemini.close()
-        
-    app = FastAPI(title="NISAR App", lifespan=lifespan)
-    app.state.gemini = GeminiService(settings)
-    app.state.results = {}
-    app.state.busy = False
-    
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
-    app.add_middleware(
-        CORSMiddleware, 
-        allow_origins=list(settings.cors_origins), 
-        allow_methods=["GET", "POST"], 
-        allow_headers=["Content-Type"]
-    )
-    
-    @app.get("/")
-    def root(): return {"status":"ok","message":"NISAR App"}
-    
-    @app.get("/api/v1/health")
-    def health():
-        return {
-            "status": "ok",
-            "data_mode": "on_demand",
-            "gemini": {
-                "configured": bool(settings.gemini_api_key),
-                "model": settings.gemini_model,
-                "connection_verified": False
-            },
-            "capabilities": {
-                "bosques": "osm_historical_mapping",
-                "glaciares": "gunw_phase_derived_los",
-                "hundimiento": "conditional_vertical_projection"
-            }
-        }
-    
-    @app.get("/api/v1/classified-zones")
-    @app.get("/api/v1/disaster-zones")
-    def zones(): 
-        return {"type":"FeatureCollection","features":[],"note":"Selecciona un área y consulta métricas."}
-    
-    @app.get("/api/v1/dashboard-stats")
-    def stats(): 
-        return {"activeAlerts":None,"criticalAreaKm2":None,"affectedPopulation":None,"lastUpdate":None,"source":None,"is_simulated":False}
-    
-    @app.get("/api/v1/displacement")
-    def displacement_route(lat:float=Query(ge=-90,le=90,allow_inf_nan=False),lng:float=Query(ge=-180,le=180,allow_inf_nan=False)):
-        raise HTTPException(409, "Selecciona área y fechas en /api/v1/metrics. No hay una serie temporal validada.")
-    
-    @app.post("/api/v1/ai/analyze")
-    async def legacy_analyze(payload: AnalysisRequest):
-        raise HTTPException(409, "Calcula /api/v1/metrics y envía su result_id a /api/v1/ai/interpret.")
-    
-    @app.get("/api/v1/multiregion/comparacion")
-    def multi(): 
-        raise HTTPException(409, "Analiza cada región con área y fechas explícitas mediante /api/v1/metrics.")
-    
-    @app.post("/api/v1/metrics")
-    async def metrics(payload: MetricsRequest):
-        firma = f"{payload.module}|{payload.date_a}|{payload.date_b}|{str(payload.polygon)}"
-        
-        if firma in app.state.results:
-            print("⚡ Respondiendo al instante desde caché en main.py")
-            return app.state.results[firma]
+load_dotenv(Path(__file__).parent / ".env")
 
-        if app.state.busy:
-            return JSONResponse(
-                status_code=202, 
-                content={"status": "processing", "message": "El servidor está procesando otra solicitud. Espera un momento."}
+import analysis_service
+from gemini_service import interpret_metrics
+
+app = FastAPI(title="NISAR Monitoring API", version="0.2.0")
+
+# Configuración de CORS
+origins = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",")
+    if o.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Almacenamiento en memoria de los resultados generados
+_RESULTS: dict[str, dict] = {}
+_RESULT_TTL_SECONDS = 3600
+_MAX_RESULTS = 200
+
+
+def _purge_expired_results() -> None:
+    now = time.time()
+    expired = [
+        k for k, v in _RESULTS.items()
+        if now - v.get("_timestamp", 0) > _RESULT_TTL_SECONDS
+    ]
+    for k in expired:
+        _RESULTS.pop(k, None)
+
+
+class MetricsRequest(BaseModel):
+    module: Literal["bosques", "hundimiento", "glaciares"]
+    polygon: list[list[float]] = Field(..., min_length=3, max_length=50)
+    date_a: Optional[date] = None
+    date_b: Optional[date] = None
+    min_coherence: float = Field(default=0.35, ge=0.0, le=1.0)
+
+
+class InterpretRequest(BaseModel):
+    result_id: str = Field(..., min_length=1, max_length=100)
+    user_context: str = Field(default="", max_length=1000)
+    locale: Literal["es", "en"] = "es"
+
+
+@app.get("/health")
+@app.get("/api/v1/health")
+def health() -> dict:
+    return {
+        "status": "ok",
+        "service": "nisar-backend",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.post("/api/v1/metrics")
+def get_metrics(req: MetricsRequest) -> dict:
+    if req.date_a and req.date_b and req.date_a >= req.date_b:
+        raise HTTPException(
+            status_code=400,
+            detail="date_a debe ser anterior a date_b.",
+        )
+
+    for pt in req.polygon:
+        if len(pt) != 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Cada vértice del polígono debe tener exactamente [lat, lon].",
+            )
+        lat, lon = pt
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            raise HTTPException(
+                status_code=400,
+                detail="Coordenadas fuera de rango válido.",
             )
 
-        app.state.busy = True
-        try:
-            print("🚀 Iniciando cálculo...")
-            result = await asyncio.to_thread(calculate, payload)
-            
-            now = time.time()
-            result_id = uuid.uuid4().hex
-            result.update(result_id=result_id, _timestamp=now)
-            
-            app.state.results[firma] = result
-            print("✅ Cálculo completado y guardado en caché.")
-            return result
-            
-        except Exception as e:
-            print(f"❌ Error en cálculo: {e}")
-            raise HTTPException(502, "Error al procesar los datos. Revisa la consola.")
-        finally:
-            app.state.busy = False
-        
-    @app.post("/api/v1/ai/interpret")
-    async def interpret(payload: InterpretRequest):
-        encontrado = None
-        firma_encontrada = None
-        for firma, datos in app.state.results.items():
-            if isinstance(datos, dict) and datos.get("result_id") == payload.result_id:
-                encontrado = datos
-                firma_encontrada = firma
-                break
-                
-        if not encontrado: 
-            raise HTTPException(404, "El resultado expiró o no existe. Vuelve a calcular.")
-            
-        context = {
-            k: v for k, v in encontrado.items() 
-            if k not in ("map", "map_a", "map_b", "points", "snapshots", "_timestamp")
-        }
-        
-        # Extraer las coordenadas del polígono de la firma guardada en caché para darle contexto espacial a Gemini
-        if "polygon" not in context and firma_encontrada:
-            partes = firma_encontrada.split("|")
-            if len(partes) == 4:
-                context["polygon_coordinates"] = partes[3]
-        
-        pregunta_final = (
-            payload.question 
-            or "Explica estas métricas, indica qué lugares, barrios o comunidades específicas se encuentran más afectadas o en riesgo según estas coordenadas, y detalla sus limitaciones."
-        )
-        if payload.user_context:
-            pregunta_final += f"\n\n[CONTEXTO DEL USUARIO]: El usuario indica lo siguiente sobre su situación: '{payload.user_context}'. Por favor, responde explicando cómo le afecta esto directamente a él, a su comunidad y qué lugares cercanos están en mayor riesgo."
-            
-        try:
-            report = await app.state.gemini.analyze(context, pregunta_final, locale=payload.locale or "es")
-            return {
-                "analysis": report.model_dump(),
-                "notice": "Interpretación de IA; las métricas se conservan por separado.",
-                "model": settings.gemini_model
-            }
-        except GeminiServiceError as e: 
-            raise HTTPException(e.status_code, str(e)) from e
-    return app
+    try:
+        result = analysis_service.calculate(req)
+    except analysis_service.DataUnavailable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno calculando métricas: {e}")
 
-app = create_app()
+    _purge_expired_results()
+    if len(_RESULTS) >= _MAX_RESULTS:
+        oldest_key = next(iter(_RESULTS))
+        _RESULTS.pop(oldest_key, None)
+
+    result_id = str(uuid.uuid4())
+    stored = dict(result)
+    stored["result_id"] = result_id
+    stored["_timestamp"] = time.time()
+    _RESULTS[result_id] = stored
+
+    response_payload = dict(result)
+    response_payload["result_id"] = result_id
+    return response_payload
+
+
+@app.post("/api/v1/ai/interpret")
+def interpret(req: InterpretRequest) -> dict:
+    _purge_expired_results()
+    encontrado = _RESULTS.get(req.result_id)
+    if not encontrado:
+        raise HTTPException(
+            status_code=404,
+            detail="El resultado solicitado no existe o ha expirado. Recalcula las métricas primero.",
+        )
+
+    # Excluimos geometrías extensas, puntos crudos y la imagen Base64 (raster_overlay)
+    # para enviar solo las métricas estadísticas limpias a Gemini
+    context = {
+        k: v
+        for k, v in encontrado.items()
+        if k not in ("map", "map_a", "map_b", "points", "snapshots", "_timestamp", "raster_overlay")
+    }
+
+    try:
+        analysis = interpret_metrics(
+            context=context,
+            user_context=req.user_context,
+            locale=req.locale,
+        )
+        return {
+            "result_id": req.result_id,
+            "locale": req.locale,
+            "analysis": analysis,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error interpretando resultados con Gemini: {e}")
