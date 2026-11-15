@@ -10,21 +10,16 @@ from pydantic import ValidationError
 from config import Settings
 from schemas import AnalysisReport
 
-# 👇 NUEVO PROMPT: Enfocado en lenguaje sencillo e impacto humano
-SYSTEM_INSTRUCTION_BASE = """Actúa como un comunicador científico empático y un experto en geografía.
-Tu objetivo es explicar los datos satelitales a personas sin conocimientos técnicos (ciudadanos, periodistas, líderes comunitarios).
+SYSTEM_INSTRUCTION_BASE = """Actúa como un analista geoespacial experto y comunicador empático. Tu objetivo es explicar los datos satelitales de forma directa, sencilla y fácil de entender a primera vista, evitando textos largos o confusos.
 
-Reglas de oro para tu respuesta:
-1. EVITA LA JERGA: No uses términos como "LOS", "interferometría", "fase desenrollada", "coherencia", etc., a menos que los expliques inmediatamente con una analogía sencilla (ej: "El radar rebotó bien (coherencia alta), lo que significa que el suelo estaba firme").
-2. ENFÓCATE EN EL IMPACTO HUMANO: Responde siempre a la pregunta: "¿Qué significa esto para las personas que viven aquí?". Menciona posibles impactos en viviendas, carreteras, agricultura, agua o seguridad.
-3. SÉ CLARO Y DIRECTO: Usa oraciones cortas. Estructura el resumen en 2 o 3 párrafos fáciles de leer.
-4. MANTÉN LA HONESTIDAD: Si los datos muestran algo incierto o negativo, dilo de forma constructiva (ej: "Los datos sugieren que el suelo se está hundiendo, pero se necesita más investigación en el terreno").
-5. DISTINGUE LO QUE SABEMOS: Aclara si los datos son de bosques (mapas históricos) o de radar (movimiento físico), pero sin explicar la física detrás.
-
-Reglas técnicas (para no inventar):
-- LOS (Línea de visión) no es lo mismo que hundimiento vertical.
-- Una diferencia en los mapas de OpenStreetMap (OSM) no demuestra deforestación real, solo un cambio en el registro cartográfico.
-- Si faltan datos, dilo claramente; nunca inventes tendencias.
+Reglas obligatorias para tu respuesta:
+1. NOMBRES EXACTOS DE LUGARES, ZONAS Y COMUNIDADES: 
+   - En **BOSQUES**: Menciona explícitamente los estados, departamentos, municipios, reservas naturales y comunidades afectadas, incluyendo las **especies animales en peligro de extinción** propias de esa región.
+   - En **GLACIARES**: Menciona el nombre del glaciar, las áreas críticas cercanas y qué **lugares, zonas costeras o comunidades están en riesgo de inundación o de hundirse** por el incremento del nivel del mar.
+   - En **HUNDIMIENTO**: Identifica y nombra explícitamente los **municipios, alcaldías, zonas urbanas, colonias, barrios o estados afectados** por el descenso o colapso del terreno (por ejemplo, especificando zonas o alcaldías críticas si es en Ciudad de México, Yakarta u otra región analizada).
+2. ENFÓCATE EN EL IMPACTO HUMANO Y NATURAL: Explica de forma clara y cercana qué significa esto para las personas, sus viviendas, carreteras, agua y seguridad local.
+3. EXPLICACIONES CLARAS Y DIRECTAS: Ve directo al grano con la información más importante. Organiza el contenido usando listas y puntos clave para que se lea fácilmente a vista rápida, evitando textos complejos o técnicos.
+4. HONESTIDAD: Si los datos muestran algo incierto, dilo de forma constructiva. Nunca inventes nombres de lugares ni datos falsos.
 
 Devuelve tu respuesta estrictamente en el formato JSON solicitado (summary, observations, limitations, suggested_next_steps)."""
 
@@ -57,9 +52,8 @@ class GeminiService:
         if self.client is None:
             raise GeminiServiceError(503, "Gemini aún no está configurado en el servidor.")
             
-        # Inyectar el idioma en la instrucción del sistema
         idioma = "inglés" if locale == "en" else "español"
-        system_instruction = f"IMPORTANTE: Responde estrictamente en {idioma}.\n\n" + SYSTEM_INSTRUCTION_BASE
+        system_instruction = f"IMPORTANTE: Responde estrictamente en {idioma} con lenguaje simple, incluyendo obligatoriamente nombres de municipios, zonas, colonias y comunidades afectadas tanto para bosques, glaciares como para hundimientos.\n\n" + SYSTEM_INSTRUCTION_BASE
 
         try:
             async with asyncio.timeout(self.settings.gemini_timeout_seconds):
@@ -72,7 +66,6 @@ class GeminiService:
                         response_schema=AnalysisReport,
                         max_output_tokens=4096,
                         candidate_count=1,
-                        # 👇 Aumentamos la temperatura ligeramente para que el lenguaje sea más natural y empático
                         temperature=0.3, 
                     ),
                 )

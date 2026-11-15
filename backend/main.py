@@ -108,22 +108,35 @@ def create_app(settings=None):
     @app.post("/api/v1/ai/interpret")
     async def interpret(payload: InterpretRequest):
         encontrado = None
+        firma_encontrada = None
         for firma, datos in app.state.results.items():
             if isinstance(datos, dict) and datos.get("result_id") == payload.result_id:
                 encontrado = datos
+                firma_encontrada = firma
                 break
                 
         if not encontrado: 
             raise HTTPException(404, "El resultado expiró o no existe. Vuelve a calcular.")
             
-        context = {k:v for k,v in encontrado.items() if k not in ("map","map_a","map_b","points","snapshots","_timestamp")}
+        context = {
+            k: v for k, v in encontrado.items() 
+            if k not in ("map", "map_a", "map_b", "points", "snapshots", "_timestamp")
+        }
         
-        pregunta_final = payload.question or "Explica estas métricas y sus limitaciones."
+        # Extraer las coordenadas del polígono de la firma guardada en caché para darle contexto espacial a Gemini
+        if "polygon" not in context and firma_encontrada:
+            partes = firma_encontrada.split("|")
+            if len(partes) == 4:
+                context["polygon_coordinates"] = partes[3]
+        
+        pregunta_final = (
+            payload.question 
+            or "Explica estas métricas, indica qué lugares, barrios o comunidades específicas se encuentran más afectadas o en riesgo según estas coordenadas, y detalla sus limitaciones."
+        )
         if payload.user_context:
-            pregunta_final += f"\n\n[CONTEXTO DEL USUARIO]: El usuario indica lo siguiente sobre su situación: '{payload.user_context}'. Por favor, responde explicando cómo le afecta esto directamente a él o a su comunidad."
+            pregunta_final += f"\n\n[CONTEXTO DEL USUARIO]: El usuario indica lo siguiente sobre su situación: '{payload.user_context}'. Por favor, responde explicando cómo le afecta esto directamente a él, a su comunidad y qué lugares cercanos están en mayor riesgo."
             
         try:
-            # 👇 AQUÍ PASAMOS EL IDIOMA AL SERVICIO DE GEMINI
             report = await app.state.gemini.analyze(context, pregunta_final, locale=payload.locale or "es")
             return {
                 "analysis": report.model_dump(),
