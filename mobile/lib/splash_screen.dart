@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'services/api_service.dart';
-
+import 'main.dart'; 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.api});
   final ApiService? api;
@@ -35,7 +35,7 @@ class _SplashScreenState extends State<SplashScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => DashboardScreen(api: _api),
+       builder: (context) => const DashboardScreen(),
         ),
       );
     } catch (e) {

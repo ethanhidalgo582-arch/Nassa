@@ -28,6 +28,7 @@ class ApiService {
   final http.Client _client;
   final String baseUrl;
 
+  // Función interna para peticiones normales
   Future<Map<String, dynamic>> _request(
     String path, {
     Map<String, dynamic>? body,
@@ -42,16 +43,12 @@ class ApiService {
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode(body),
                     ))
-              .timeout(
-                Duration(
-                  seconds: path == '/metrics' ? 300 : (body == null ? 15 : 60),
-                ),
-              );
+              .timeout(const Duration(seconds: 300)); // 5 minutos máximo
+
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       
       if (response.statusCode < 200 || response.statusCode >= 300) {
         print('ERROR DEL BACKEND: $decoded'); 
-        
         final detail = decoded is Map ? decoded['detail'] : null;
         throw ApiException(
           detail is String
@@ -61,9 +58,7 @@ class ApiService {
       }
       return decoded;
     } on TimeoutException {
-      throw const ApiException(
-        'La solicitud tardó demasiado. Intenta de nuevo.',
-      );
+      throw const ApiException('La solicitud tardó demasiado. Intenta de nuevo.');
     } on http.ClientException {
       throw const ApiException('No se pudo conectar con el servidor.');
     } on FormatException {
@@ -71,16 +66,12 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> getClassifiedZones() =>
-      _request('/classified-zones');
-
-  Future<Map<String, dynamic>> getDisplacement(double lat, double lng) =>
-      _request('/displacement?lat=$lat&lng=$lng');
-
-  Future<Map<String, dynamic>> getDashboardStats() =>
-      _request('/dashboard-stats');
-
-  Future<Map<String, dynamic>> getHealth() => _request('/health');
+  // 👇 AGREGAMOS "async" AQUÍ PARA QUE LA SPLASH SCREEN PUEDA USAR await
+  Future<Map<String, dynamic>> getHealth() async => _request('/health');
+  
+  Future<Map<String, dynamic>> getClassifiedZones() => _request('/classified-zones');
+  Future<Map<String, dynamic>> getDisplacement(double lat, double lng) => _request('/displacement?lat=$lat&lng=$lng');
+  Future<Map<String, dynamic>> getDashboardStats() => _request('/dashboard-stats');
 
   Future<Map<String, dynamic>> analyzeZone(
     double lat,
@@ -96,8 +87,40 @@ class ApiService {
     },
   );
 
-  Future<Map<String, dynamic>> getMetrics(Map<String, dynamic> payload) =>
-      _request('/metrics', body: payload);
+  // 👇 AQUÍ ESTÁ LA MAGIA DEL REINTENTO ASÍNCRONO
+  Future<Map<String, dynamic>> getMetrics(Map<String, dynamic> payload) async {
+    int intentos = 0;
+    while (intentos < 40) { // Intentar hasta 40 veces (aprox 2 minutos)
+      try {
+        final response = await _client.post(
+          Uri.parse('$baseUrl/metrics'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(payload),
+        );
+
+        if (response.statusCode == 202) {
+          // El backend está procesando (Tarea en segundo plano), esperamos 3 segundos
+          print('⏳ Esperando a que el backend termine el análisis... (Intento ${intentos + 1})');
+          await Future.delayed(const Duration(seconds: 3));
+          intentos++;
+          continue;
+        }
+
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return decoded; // ¡Éxito! Devolvemos los datos
+        } else {
+          final detail = decoded is Map ? decoded['detail'] : null;
+          throw ApiException(detail is String ? detail : 'Error ${response.statusCode}');
+        }
+      } catch (e) {
+        if (intentos >= 39) rethrow;
+        await Future.delayed(const Duration(seconds: 3));
+        intentos++;
+      }
+    }
+    throw const ApiException('El servidor tardó demasiado en procesar los datos.');
+  }
 
   // 👇 AQUÍ ESTÁ LA CORRECCIÓN PARA EL USER_CONTEXT
   Future<Map<String, dynamic>> interpret(String id, {String? userContext}) =>
