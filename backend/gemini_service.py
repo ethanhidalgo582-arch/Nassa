@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 import httpx
 from google import genai
@@ -16,6 +17,8 @@ Una diferencia de cartografía OSM no demuestra deforestación. Respeta todas la
 No conviertas datos faltantes en ceros. No inventes tendencias ni atribuyas datos OSM a NISAR.
 Devuelve summary, observations, limitations y suggested_next_steps conforme al esquema."""
 
+logger = logging.getLogger(__name__)
+
 
 class GeminiServiceError(Exception):
     def __init__(self, status_code: int, message: str):
@@ -26,17 +29,16 @@ class GeminiServiceError(Exception):
 class GeminiService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = (
-            genai.Client(
-                api_key=settings.gemini_api_key,
-                vertexai=False,
-                http_options=types.HttpOptions(
-                    timeout=int(settings.gemini_timeout_seconds * 1000),
-                    retry_options=types.HttpRetryOptions(attempts=1),
-                ),
-            )
-            if settings.gemini_api_key else None
-        )
+        # En gemini_service.py, dentro de __init__
+        self.client = genai.Client(
+    api_key=settings.gemini_api_key,
+    vertexai=False,
+    http_options=types.HttpOptions(
+        api_version='v1',  # <--- Forzamos la versión estable
+        timeout=int(settings.gemini_timeout_seconds * 1000),
+        retry_options=types.HttpRetryOptions(attempts=1),
+    ),
+)
 
     async def close(self):
         if self.client is not None:
@@ -60,18 +62,28 @@ class GeminiService:
                     ),
                 )
         except (TimeoutError, httpx.TimeoutException) as exc:
+            logger.error("Gemini timeout: %s", exc)
             raise GeminiServiceError(504, "Gemini tardó demasiado. Intenta nuevamente.") from exc
         except errors.APIError as exc:
+            # Log del código y mensaje reales de Gemini (recortado para no inundar la consola)
+            logger.error(
+                "Gemini APIError code=%s status=%s message=%s",
+                getattr(exc, "code", None),
+                getattr(exc, "status", None),
+                str(getattr(exc, "message", str(exc)))[:500],
+            )
             if exc.code == 429:
                 raise GeminiServiceError(429, "Se alcanzó el límite de uso de Gemini. Intenta más tarde.") from exc
             if exc.code in (400, 401, 403, 404):
                 raise GeminiServiceError(503, "Revisa la clave, los permisos y el modelo de Gemini en el servidor.") from exc
             raise GeminiServiceError(502, "Gemini no está disponible en este momento.") from exc
         except httpx.RequestError as exc:
+            logger.error("Gemini request error: %s", exc)
             raise GeminiServiceError(502, "No se pudo conectar con Gemini.") from exc
         try:
             if not response.text:
                 raise ValueError("Respuesta vacía o bloqueada")
             return AnalysisReport.model_validate_json(response.text)
         except (ValidationError, ValueError) as exc:
+            logger.error("Gemini respuesta inválida: %s", str(exc)[:500])
             raise GeminiServiceError(502, "Gemini no devolvió un análisis válido. Intenta nuevamente.") from exc

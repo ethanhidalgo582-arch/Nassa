@@ -47,7 +47,7 @@ def forest_snapshot(polygon, day):
         import osmnx as ox
         headers = {"User-Agent": "NISAR-App/1.0 (contacto: ethanhidalgo582@gmail.com)"}
                 # Usamos un servidor espejo (Kumi Systems) que suele ser más rápido y estable
-        response=httpx.post("https://overpass.kumi.systems/api/interpreter",data={"data":query},timeout=120, headers=headers)
+        response=httpx.post("https://overpass.kumi.systems/api/interpreter",data={"data":query},timeout=300, headers=headers)
         response.raise_for_status()
         data=response.json()
         if data.get("remark"):
