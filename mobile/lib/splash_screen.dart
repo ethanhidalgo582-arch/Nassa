@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'services/api_service.dart';
-import 'main.dart'; 
+import 'main.dart';
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.api});
   final ApiService? api;
@@ -22,27 +23,22 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _initializeApp() async {
     try {
-      // Intentamos comprobar el estado del servidor o precargar datos esenciales
       setState(() => _statusMessage = 'Verificando servidor...');
       await _api.getHealth();
-      
-      // Puedes simular o esperar otras cargas iniciales si lo necesitas
       await Future.delayed(const Duration(milliseconds: 800));
 
       if (!mounted) return;
-      
-      // Navegamos al Dashboard y reemplazamos la pantalla de carga para que no se pueda volver atrás
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-       builder: (context) => const DashboardScreen(),
+          builder: (context) => DashboardScreen(api: _api),
         ),
       );
     } catch (e) {
       setState(() {
         _statusMessage = 'Sin conexión con el servidor. Reintentando...';
       });
-      // Reintentar automáticamente después de 3 segundos si falla
       await Future.delayed(const Duration(seconds: 3));
       if (mounted) _initializeApp();
     }
@@ -58,7 +54,6 @@ class _SplashScreenState extends State<SplashScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Logo o ícono representativo de tu app NISAR
               const Icon(
                 Icons.satellite_alt_rounded,
                 size: 80,

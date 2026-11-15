@@ -35,6 +35,8 @@ const Map<String, Map<String, String>> localizedTexts = {
     'aiTitle': 'Interpretación con Gemini e Impacto Humano',
     'aiButton': 'Consultar a Gemini',
     'aiInterpreting': 'Interpretando…',
+    'askGeminiFirst': 'Primero calcula las métricas para poder consultar a Gemini.',
+    'geminiResult': 'Interpretación de Gemini:',
   },
   'en': {
     'appTitle': 'NISAR App',
@@ -57,6 +59,8 @@ const Map<String, Map<String, String>> localizedTexts = {
     'aiTitle': 'Gemini Interpretation & Human Impact',
     'aiButton': 'Ask Gemini',
     'aiInterpreting': 'Interpreting…',
+    'askGeminiFirst': 'First calculate the metrics to be able to query Gemini.',
+    'geminiResult': 'Gemini interpretation:',
   },
 };
 
@@ -159,13 +163,22 @@ class NisarApp extends StatefulWidget {
 class _NisarAppState extends State<NisarApp> {
   String _locale = 'es';
 
+  /// Notifica cambios de idioma a cualquier listener (p. ej. DashboardScreen).
+  final ValueNotifier<String> localeNotifier = ValueNotifier('es');
+
   void setLocale(String locale) {
-    setState(() {
-      _locale = locale;
-    });
+    if (_locale == locale) return;
+    setState(() => _locale = locale);
+    localeNotifier.value = locale;
   }
 
   String get currentLocale => _locale;
+
+  @override
+  void dispose() {
+    localeNotifier.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -250,10 +263,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     api = widget.api ?? ApiService();
     health();
+    // Registrar el listener cuando el árbol ya esté montado.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NisarApp.of(context)?.localeNotifier.addListener(_onLocaleChanged);
+    });
+  }
+
+  /// Se dispara cada vez que el usuario cambia el idioma.
+  /// Invalida las interpretaciones cacheadas y las vuelve a pedir.
+  void _onLocaleChanged() {
+    if (!mounted) return;
+    setState(() {
+      ai = null;
+      aiError = null;
+      _forestAi = null;
+      _forestAiError = null;
+      _glacierAi = null;
+      _glacierAiError = null;
+    });
+    // Re-solicitar interpretaciones activas en el nuevo idioma
+    if (result?['result_id'] != null) {
+      interpret();
+    }
+    final forestData =
+        _forestResults[_forestCacheKey(_forestZoneId, _forestYear, _forestMonth)];
+    if (forestData?['result_id'] != null) {
+      _interpretForest(forestData);
+    }
+    final glacierData = _glacierResults[_glacierZoneId];
+    if (glacierData?['result_id'] != null) {
+      _interpretGlacier(glacierData);
+    }
   }
 
   @override
   void dispose() {
+    NisarApp.of(context)?.localeNotifier.removeListener(_onLocaleChanged);
     api.close();
     controller.dispose();
     userContextController.dispose();
@@ -424,12 +469,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }) async {
     final resultId = currentResult?['result_id'];
     if (resultId == null) return;
+    final locale = NisarApp.of(context)?.currentLocale ?? 'es';
     setAiBusy(true);
     setAiError(null);
     try {
       final value = await api.interpret(
         resultId as String,
         userContext: userContext.text,
+        locale: locale,
       );
       if (mounted && id == request && selectedModule == module) {
         setAi(value);
@@ -443,15 +490,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> interpret() => _interpretFor(
-        id: request,
-        selectedModule: module,
-        currentResult: result,
-        userContext: userContextController,
-        setAiBusy: (v) => setState(() => aiBusy = v),
-        setAiError: (v) => setState(() => aiError = v),
-        setAi: (v) => setState(() => ai = v),
-      );
+  Future<void> interpret() async {
+    // 1. Determinar cuál es el resultado correcto según el módulo
+    Map<String, dynamic>? currentResult;
+    
+    if (module == 'bosques') {
+      final key = _forestCacheKey(_forestZoneId, _forestYear, _forestMonth);
+      currentResult = _forestResults[key];
+    } else if (module == 'glaciares') {
+      currentResult = _glacierResults[_glacierZoneId];
+    } else {
+      currentResult = result; // Para hundimiento
+    }
+
+    // 2. Si no hay resultado aún, mostrar error
+    if (currentResult == null || currentResult['result_id'] == null) {
+      setState(() {
+        aiError = NisarApp.of(context)?.currentLocale == 'en'
+            ? 'First calculate the metrics for this area to query Gemini.'
+            : 'Primero calcula las métricas para esta área para poder consultar a Gemini.';
+      });
+      return;
+    }
+
+    // 3. Llamar a Gemini con el resultado correcto
+    await _interpretFor(
+      id: request,
+      selectedModule: module,
+      currentResult: currentResult,
+      userContext: userContextController,
+      setAiBusy: (v) => setState(() => aiBusy = v),
+      setAiError: (v) => setState(() => aiError = v),
+      setAi: (v) => setState(() => ai = v),
+    );
+  }
 
   String _forestCacheKey(String zoneId, int year, int? month) =>
       '$zoneId|$year|${month ?? 'all'}';
@@ -518,12 +590,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _interpretForest(Map<String, dynamic>? data) async {
     final resultId = data?['result_id'];
     if (resultId == null) return;
+    final locale = NisarApp.of(context)?.currentLocale ?? 'es';
     setState(() {
       _forestAiLoading = true;
       _forestAiError = null;
     });
     try {
-      final value = await api.interpret(resultId as String);
+      final value = await api.interpret(resultId as String, locale: locale);
       if (mounted) setState(() => _forestAi = value);
     } catch (e) {
       if (mounted) setState(() => _forestAiError = e.toString());
@@ -571,12 +644,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _interpretGlacier(Map<String, dynamic>? data) async {
     final resultId = data?['result_id'];
     if (resultId == null) return;
+    final locale = NisarApp.of(context)?.currentLocale ?? 'es';
     setState(() {
       _glacierAiLoading = true;
       _glacierAiError = null;
     });
     try {
-      final value = await api.interpret(resultId as String);
+      final value = await api.interpret(resultId as String, locale: locale);
       if (mounted) setState(() => _glacierAi = value);
     } catch (e) {
       if (mounted) setState(() => _glacierAiError = e.toString());
@@ -645,7 +719,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 const Icon(Icons.language, size: 18, color: Colors.black54),
                 const SizedBox(width: 8),
-                const Text('Idioma', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                Text(
+                  currentLang == 'en' ? 'Language' : 'Idioma',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
                 const Spacer(),
                 DropdownButton<String>(
                   value: currentLang,
@@ -657,7 +734,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onChanged: (val) {
                     if (val != null) {
                       NisarApp.of(context)?.setLocale(val);
-                      setState(() {});
                     }
                   },
                 ),
@@ -818,18 +894,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
   );
 
   Widget chart(Map<String, dynamic>? res) {
+    final isEn = NisarApp.of(context)?.currentLocale == 'en';
     final values = (res?['chart'] ?? []) as List;
+    
     if (values.isEmpty) {
       return Text(
-        NisarApp.of(context)?.currentLocale == 'en'
+        isEn
             ? 'No chart yet. Select an area, dates and calculate metrics.'
             : 'Sin gráfica todavía. Selecciona un área, las fechas y calcula las métricas.',
       );
     }
+
+    // Diccionarios de traducción para los textos que vienen del backend
+    final measurementMap = {
+      'Proyección vertical bajo supuesto': 'Vertical projection under assumption',
+      'LOS derivado de fase (sin validar)': 'Phase-derived LOS (unvalidated)',
+      'Movimiento de masa de hielo (LOS)': 'Ice mass movement (LOS)',
+      'Superficie cartografiada como bosque': 'Mapped forest area',
+    };
+    
+    final labelMap = {
+      'Percentil 10': '10th Percentile',
+      'Percentil 90': '90th Percentile',
+      'Mediana': 'Median',
+      'inicial': 'initial',
+      'actual': 'current',
+    };
+
+    final rawMeasurement = res!['measurement'] as String? ?? '';
+    final translatedMeasurement = isEn ? (measurementMap[rawMeasurement] ?? rawMeasurement) : rawMeasurement;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('${res!['measurement']} · ${res['unit']}'),
+        Text('$translatedMeasurement · ${res['unit']}'),
         const SizedBox(height: 16),
         SizedBox(
           height: 235,
@@ -861,15 +959,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     reservedSize: 38,
                     getTitlesWidget: (v, meta) {
                       final i = v.toInt();
-                      return i >= 0 && i < values.length
-                          ? Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                values[i]['label'] as String,
-                                style: const TextStyle(fontSize: 10),
-                              ),
-                            )
-                          : const SizedBox.shrink();
+                      if (i >= 0 && i < values.length) {
+                        final rawLabel = values[i]['label'] as String? ?? '';
+                        final translatedLabel = isEn ? (labelMap[rawLabel] ?? rawLabel) : rawLabel;
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            translatedLabel,
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
                     },
                   ),
                 ),
@@ -879,7 +980,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         for (final v in values)
           Text(
-            '${v['label']}: ${(v['value'] as num).toStringAsFixed(3)} ${res['unit']}',
+            '${isEn ? (labelMap[v['label']] ?? v['label']) : v['label']}: ${(v['value'] as num).toStringAsFixed(3)} ${res['unit']}',
           ),
       ],
     );
@@ -967,13 +1068,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required Map<String, dynamic>? analysis,
     required String? errorText,
   }) {
+    final isEn = NisarApp.of(context)?.currentLocale == 'en';
     if (currentResult == null) {
       return card(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            title('Resumen del análisis (IA)'),
-            const Text('El resumen aparecerá aquí en cuanto cargues un gráfico o calcules métricas.'),
+            title(isEn ? 'Analysis summary (AI)' : 'Resumen del análisis (IA)'),
+            Text(isEn
+                ? 'The summary will appear here as soon as you load a chart or calculate metrics.'
+                : 'El resumen aparecerá aquí en cuanto cargues un gráfico o calcules métricas.'),
           ],
         ),
       );
@@ -982,13 +1086,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          title('Resumen del análisis (IA)'),
+          title(isEn ? 'Analysis summary (AI)' : 'Resumen del análisis (IA)'),
           if (loading)
             const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
           else if (errorText != null)
             Text(errorText, style: const TextStyle(color: Colors.red))
           else if (analysis == null)
-            const Text('No se pudo generar el resumen.')
+            Text(isEn
+                ? 'The summary could not be generated.'
+                : 'No se pudo generar el resumen.')
           else ...[
             SelectableText(analysis['analysis']['summary'] as String, style: const TextStyle(fontSize: 15)),
           ],
@@ -998,21 +1104,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _forestChartCard() {
+    final isEn = NisarApp.of(context)?.currentLocale == 'en';
     final zone = _currentForestZone;
     final key = _forestCacheKey(zone.id, _forestYear, _forestMonth);
     final data = _forestResults[key];
     final (vivo, inicial) = _forestProportion(data);
     final hasData = data != null && inicial > 0;
     final yearHasData = _yearHasData[_forestYear] ?? false;
-    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    
+    final monthNames = isEn 
+        ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        : ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+        
     final fraction = inicial <= 0 ? 0.0 : (vivo / inicial).clamp(0.0, 1.0);
 
     return card(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          title('Proporción de bosque (inmersivo)'),
-          const Text('La copa verde representa el bosque vivo; el gris, la superficie perdida.'),
+          title(isEn ? 'Forest proportion (immersive)' : 'Proporción de bosque (inmersivo)'),
+          Text(isEn 
+              ? 'The green canopy represents living forest; grey shows lost area.' 
+              : 'La copa verde representa el bosque vivo; el gris, la superficie perdida.'),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -1044,6 +1157,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             lastYear: DateTime.now().year,
             showMonths: yearHasData,
             monthNames: monthNames,
+            allYearText: isEn ? 'All year' : 'Todo el año',
             onYearChanged: (y) {
               setState(() {
                 _forestYear = y;
@@ -1071,7 +1185,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           else if (_forestError != null)
             Text(_forestError!, style: const TextStyle(color: Colors.red))
           else if (!hasData)
-            const Text('No hay superficie forestal cartografiada para esta zona y fecha.')
+            Text(isEn 
+                ? 'No mapped forest area for this zone and date.' 
+                : 'No hay superficie forestal cartografiada para esta zona y fecha.')
           else
             _SvgProportionChart(
               assetPath: 'assets/forest.svg',
@@ -1085,6 +1201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _glacierChartCard() {
+    final isEn = NisarApp.of(context)?.currentLocale == 'en';
     final zone = _currentGlacierZone;
     final data = _glacierResults[zone.id];
     final fraction = _glacierFraction(data);
@@ -1094,8 +1211,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          title('Proporción de hielo (inmersivo)'),
-          const Text('La parte azul representa hielo estable; el gris, pérdida de coherencia.'),
+          title(isEn ? 'Ice proportion (immersive)' : 'Proporción de hielo (inmersivo)'),
+          Text(isEn 
+              ? 'The blue part represents stable ice; grey shows loss of coherence.' 
+              : 'La parte azul representa hielo estable; el gris, pérdida de coherencia.'),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -1125,7 +1244,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           else if (_glacierError != null)
             Text(_glacierError!, style: const TextStyle(color: Colors.red))
           else if (!hasData)
-            const Text('No hay producto GUNW disponible para esta zona.')
+            Text(isEn 
+                ? 'No GUNW product available for this zone.' 
+                : 'No hay producto GUNW disponible para esta zona.')
           else
             _SvgProportionChart(
               assetPath: 'assets/glacier.svg',
@@ -1153,7 +1274,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         style: const TextStyle(fontSize: 15),
       ),
       const SizedBox(height: 24),
-      
+
       // Módulo Bosques
       card(
         Column(
@@ -1336,7 +1457,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               title(t('metricsTitle')),
+              // Si ya hay una interpretación de Gemini, la mostramos primero
+              if (ai != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(t('geminiResult'), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                      const SizedBox(height: 8),
+                      SelectableText(ai!['analysis']['summary'] as String),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
               chart(result),
+            ],
+          ),
+        ),
+        // Agregamos el buscador de Gemini también a hundimiento
+        card(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title(t('aiTitle')),
+              const SizedBox(height: 12),
+              TextField(
+                controller: userContextController,
+                maxLength: 1000,
+                maxLines: 3,
+                enabled: !aiBusy,
+                decoration: InputDecoration(
+                  labelText: NisarApp.of(context)?.currentLocale == 'en' ? 'Your query (Optional)' : 'Escribe tu consulta (Opcional)',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: aiBusy ? null : interpret,
+                icon: const Icon(Icons.auto_awesome),
+                label: Text(aiBusy ? t('aiInterpreting') : t('aiButton')),
+              ),
+              if (aiError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: SelectableText(aiError!, style: const TextStyle(color: Colors.red)),
+                ),
             ],
           ),
         ),
@@ -1381,7 +1555,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 label: Text(aiBusy ? t('aiInterpreting') : t('aiButton')),
               ),
               if (aiError != null)
-                SelectableText(aiError!, style: const TextStyle(color: Colors.red)),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: SelectableText(aiError!, style: const TextStyle(color: Colors.red)),
+                ),
               if (ai != null) ...[
                 const SizedBox(height: 12),
                 SelectableText(ai!['analysis']['summary'] as String),
@@ -1429,6 +1606,7 @@ class _DateSelector extends StatelessWidget {
     required this.lastYear,
     required this.showMonths,
     required this.monthNames,
+    required this.allYearText,
     required this.onYearChanged,
     required this.onMonthChanged,
     required this.onRefresh,
@@ -1440,6 +1618,7 @@ class _DateSelector extends StatelessWidget {
   final int lastYear;
   final bool showMonths;
   final List<String> monthNames;
+  final String allYearText;
   final ValueChanged<int> onYearChanged;
   final ValueChanged<int?> onMonthChanged;
   final VoidCallback onRefresh;
@@ -1465,16 +1644,16 @@ class _DateSelector extends StatelessWidget {
         if (showMonths)
           DropdownButton<int?>(
             value: month,
-            hint: const Text('Todo el año'),
+            hint: Text(allYearText),
             items: [
-              const DropdownMenuItem(value: null, child: Text('Todo el año')),
+              DropdownMenuItem(value: null, child: Text(allYearText)),
               for (var m = 1; m <= 12; m++)
                 DropdownMenuItem(value: m, child: Text(monthNames[m - 1])),
             ],
             onChanged: onMonthChanged,
           ),
         IconButton(
-          tooltip: 'Recargar',
+          tooltip: NisarApp.of(context)?.currentLocale == 'en' ? 'Refresh' : 'Recargar',
           onPressed: onRefresh,
           icon: const Icon(Icons.refresh),
         ),

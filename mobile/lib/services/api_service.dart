@@ -17,6 +17,7 @@ class ApiService {
       baseUrl = (baseUrl ?? defaultBaseUrl).replaceFirst(RegExp(r'/+$'), '');
 
   static const _configuredUrl = String.fromEnvironment('API_BASE_URL');
+  
   static String get defaultBaseUrl {
     if (_configuredUrl.isNotEmpty) return _configuredUrl;
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -66,11 +67,13 @@ class ApiService {
     }
   }
 
-  // 👇 AGREGAMOS "async" AQUÍ PARA QUE LA SPLASH SCREEN PUEDA USAR await
   Future<Map<String, dynamic>> getHealth() async => _request('/health');
   
   Future<Map<String, dynamic>> getClassifiedZones() => _request('/classified-zones');
-  Future<Map<String, dynamic>> getDisplacement(double lat, double lng) => _request('/displacement?lat=$lat&lng=$lng');
+  
+  Future<Map<String, dynamic>> getDisplacement(double lat, double lng) => 
+      _request('/displacement?lat=$lat&lng=$lng');
+      
   Future<Map<String, dynamic>> getDashboardStats() => _request('/dashboard-stats');
 
   Future<Map<String, dynamic>> analyzeZone(
@@ -87,7 +90,7 @@ class ApiService {
     },
   );
 
-  // 👇 AQUÍ ESTÁ LA MAGIA DEL REINTENTO ASÍNCRONO
+  // Aquí está la magia del reintento asíncrono para las tareas pesadas
   Future<Map<String, dynamic>> getMetrics(Map<String, dynamic> payload) async {
     int intentos = 0;
     while (intentos < 40) { // Intentar hasta 40 veces (aprox 2 minutos)
@@ -122,12 +125,18 @@ class ApiService {
     throw const ApiException('El servidor tardó demasiado en procesar los datos.');
   }
 
-  // 👇 AQUÍ ESTÁ LA CORRECCIÓN PARA EL USER_CONTEXT
-  Future<Map<String, dynamic>> interpret(String id, {String? userContext}) =>
+  // Interpretación con Gemini. Se envía el locale para que el backend sepa en qué idioma responder.
+  Future<Map<String, dynamic>> interpret(
+    String id, {
+    String? userContext,
+    String? locale,
+  }) =>
       _request('/ai/interpret', body: {
         'result_id': id,
         if (userContext != null && userContext.trim().isNotEmpty) 
           'user_context': userContext.trim(),
+        if (locale != null) 
+          'locale': locale, // 👈 NUEVO: enviar el idioma actual
       });
 
   void close() => _client.close();
