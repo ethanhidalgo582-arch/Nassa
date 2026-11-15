@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'services/api_service.dart';
@@ -31,7 +30,7 @@ const Map<String, Map<String, String>> localizedTexts = {
     'areaAndPeriod': 'Área y período',
     'preloadZones': 'Zonas críticas precargadas:',
     'mapTitle': 'Mapa del área seleccionada',
-    'metricsTitle': 'Métricas calculadas',
+    'metricsTitle': 'Interpretación del análisis',
     'aiTitle': 'Interpretación con Gemini e Impacto Humano',
     'aiButton': 'Consultar a Gemini',
     'aiInterpreting': 'Interpretando…',
@@ -55,7 +54,7 @@ const Map<String, Map<String, String>> localizedTexts = {
     'areaAndPeriod': 'Area and period',
     'preloadZones': 'Preloaded critical zones:',
     'mapTitle': 'Selected area map',
-    'metricsTitle': 'Calculated metrics',
+    'metricsTitle': 'Analysis interpretation',
     'aiTitle': 'Gemini Interpretation & Human Impact',
     'aiButton': 'Ask Gemini',
     'aiInterpreting': 'Interpreting…',
@@ -163,7 +162,6 @@ class NisarApp extends StatefulWidget {
 class _NisarAppState extends State<NisarApp> {
   String _locale = 'es';
 
-  /// Notifica cambios de idioma a cualquier listener (p. ej. DashboardScreen).
   final ValueNotifier<String> localeNotifier = ValueNotifier('es');
 
   void setLocale(String locale) {
@@ -263,14 +261,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     api = widget.api ?? ApiService();
     health();
-    // Registrar el listener cuando el árbol ya esté montado.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NisarApp.of(context)?.localeNotifier.addListener(_onLocaleChanged);
     });
   }
 
-  /// Se dispara cada vez que el usuario cambia el idioma.
-  /// Invalida las interpretaciones cacheadas y las vuelve a pedir.
   void _onLocaleChanged() {
     if (!mounted) return;
     setState(() {
@@ -281,7 +276,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _glacierAi = null;
       _glacierAiError = null;
     });
-    // Re-solicitar interpretaciones activas en el nuevo idioma
     if (result?['result_id'] != null) {
       interpret();
     }
@@ -327,11 +321,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void navigate(int index) {
     setState(() {
+      bumpRequestModule();
       page = index;
       if (index > 0) module = modules[index - 1];
+      busy = false;
+      aiBusy = false;
+      _forestAiLoading = false;
+      _glacierAiLoading = false;
       error = null;
-      ai = null;
       aiError = null;
+      ai = null;
+      userContextController.clear();
       area = [];
     });
     if (index == 1) _ensureForestLoaded();
@@ -414,30 +414,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final data = await api.getMetrics(payload);
       if (mounted && id == request) {
         setState(() => store[moduleName] = data);
-        if (moduleName == 'bosques' || moduleName == 'glaciares') {
-          _interpretFor(
-            id: id,
-            selectedModule: moduleName,
-            currentResult: data,
-            userContext: userContextController,
-            setAiBusy: (v) => setState(() => aiBusy = v),
-            setAiError: (v) => setState(() => aiError = v),
-            setAi: (v) => setState(() => ai = v),
-          );
-        }
+        _interpretFor(
+          id: id,
+          selectedModule: moduleName,
+          currentResult: data,
+          userContext: userContextController,
+          setAiBusy: (v) => setState(() => aiBusy = v),
+          setAiError: (v) => setState(() => aiError = v),
+          setAi: (v) => setState(() => ai = v),
+        );
       }
     } catch (e) {
       if (mounted && id == request) {
         setError(e.toString());
       }
     } finally {
-      if (mounted) setBusy(false);
+      if (mounted && id == request) {
+        setBusy(false);
+      }
     }
   }
 
   Future<void> calculate() async {
     if (busy) {
-      setState(() => error = 'Ya hay un análisis de gráfico en curso. Espera un momento.');
+      setState(() => error = 'Ya hay un análisis en curso. Espera un momento.');
       return;
     }
     if (area.length < 3 || (advanced && !a.isBefore(b))) {
@@ -486,42 +486,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
         setAiError(e.toString());
       }
     } finally {
-      if (mounted) setAiBusy(false);
+      if (mounted && id == request && selectedModule == module) {
+        setAiBusy(false);
+      }
     }
   }
 
   Future<void> interpret() async {
-    // 1. Determinar cuál es el resultado correcto según el módulo
     Map<String, dynamic>? currentResult;
     
     if (module == 'bosques') {
+      if (_forestLoading) {
+        setState(() {
+          aiError = NisarApp.of(context)?.currentLocale == 'en'
+              ? 'Forest data is still loading. Please wait a moment.'
+              : 'Los datos de bosques aún están cargando. Espera un momento.';
+        });
+        return;
+      }
       final key = _forestCacheKey(_forestZoneId, _forestYear, _forestMonth);
       currentResult = _forestResults[key];
     } else if (module == 'glaciares') {
+      if (_glacierLoading) {
+        setState(() {
+          aiError = NisarApp.of(context)?.currentLocale == 'en'
+              ? 'Glacier data is still loading. Please wait a moment.'
+              : 'Los datos de glaciares aún están cargando. Espera un momento.';
+        });
+        return;
+      }
       currentResult = _glacierResults[_glacierZoneId];
     } else {
-      currentResult = result; // Para hundimiento
+      currentResult = result;
     }
 
-    // 2. Si no hay resultado aún, mostrar error
     if (currentResult == null || currentResult['result_id'] == null) {
       setState(() {
         aiError = NisarApp.of(context)?.currentLocale == 'en'
-            ? 'First calculate the metrics for this area to query Gemini.'
-            : 'Primero calcula las métricas para esta área para poder consultar a Gemini.';
+            ? 'First calculate or wait for metrics to load for this area to query Gemini.'
+            : 'Primero calcula o espera a que carguen las métricas de esta área para poder consultar a Gemini.';
       });
       return;
     }
 
-    // 3. Llamar a Gemini con el resultado correcto
+    setState(() => aiError = null);
+    final id = ++request;
+
     await _interpretFor(
-      id: request,
+      id: id,
       selectedModule: module,
       currentResult: currentResult,
       userContext: userContextController,
       setAiBusy: (v) => setState(() => aiBusy = v),
       setAiError: (v) => setState(() => aiError = v),
-      setAi: (v) => setState(() => ai = v),
+      setAi: (v) {
+        setState(() {
+          ai = v;
+          if (module == 'bosques') _forestAi = v;
+          if (module == 'glaciares') _glacierAi = v;
+        });
+      },
     );
   }
 
@@ -535,7 +559,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       glacierZones.firstWhere((z) => z.id == _glacierZoneId);
 
   Future<void> _loadForestChart({bool force = false}) async {
-    if (busy || _forestLoading) return;
+    if (_forestLoading) return;
     final key = _forestCacheKey(_forestZoneId, _forestYear, _forestMonth);
     if (!force && _forestResults.containsKey(key)) {
       final cached = _forestResults[key];
@@ -597,16 +621,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
     try {
       final value = await api.interpret(resultId as String, locale: locale);
-      if (mounted) setState(() => _forestAi = value);
+      if (mounted && module == 'bosques') {
+        setState(() => _forestAi = value);
+      }
     } catch (e) {
-      if (mounted) setState(() => _forestAiError = e.toString());
+      if (mounted && module == 'bosques') {
+        setState(() => _forestAiError = e.toString());
+      }
     } finally {
       if (mounted) setState(() => _forestAiLoading = false);
     }
   }
 
   Future<void> _loadGlacierChart({bool force = false}) async {
-    if (busy || _glacierLoading) return;
+    if (_glacierLoading) return;
     final zone = _currentGlacierZone;
     if (!force && _glacierResults.containsKey(zone.id)) {
       final cached = _glacierResults[zone.id];
@@ -651,9 +679,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
     try {
       final value = await api.interpret(resultId as String, locale: locale);
-      if (mounted) setState(() => _glacierAi = value);
+      if (mounted && module == 'glaciares') {
+        setState(() => _glacierAi = value);
+      }
     } catch (e) {
-      if (mounted) setState(() => _glacierAiError = e.toString());
+      if (mounted && module == 'glaciares') {
+        setState(() => _glacierAiError = e.toString());
+      }
     } finally {
       if (mounted) setState(() => _glacierAiLoading = false);
     }
@@ -893,99 +925,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  Widget chart(Map<String, dynamic>? res) {
-    final isEn = NisarApp.of(context)?.currentLocale == 'en';
-    final values = (res?['chart'] ?? []) as List;
-    
-    if (values.isEmpty) {
-      return Text(
-        isEn
-            ? 'No chart yet. Select an area, dates and calculate metrics.'
-            : 'Sin gráfica todavía. Selecciona un área, las fechas y calcula las métricas.',
-      );
-    }
-
-    // Diccionarios de traducción para los textos que vienen del backend
-    final measurementMap = {
-      'Proyección vertical bajo supuesto': 'Vertical projection under assumption',
-      'LOS derivado de fase (sin validar)': 'Phase-derived LOS (unvalidated)',
-      'Movimiento de masa de hielo (LOS)': 'Ice mass movement (LOS)',
-      'Superficie cartografiada como bosque': 'Mapped forest area',
-    };
-    
-    final labelMap = {
-      'Percentil 10': '10th Percentile',
-      'Percentil 90': '90th Percentile',
-      'Mediana': 'Median',
-      'inicial': 'initial',
-      'actual': 'current',
-    };
-
-    final rawMeasurement = res!['measurement'] as String? ?? '';
-    final translatedMeasurement = isEn ? (measurementMap[rawMeasurement] ?? rawMeasurement) : rawMeasurement;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$translatedMeasurement · ${res['unit']}'),
-        const SizedBox(height: 16),
-        SizedBox(
-          height: 235,
-          child: BarChart(
-            BarChartData(
-              barGroups: [
-                for (int i = 0; i < values.length; i++)
-                  BarChartGroupData(
-                    x: i,
-                    barRods: [
-                      BarChartRodData(
-                        toY: (values[i]['value'] as num).toDouble(),
-                        width: 28,
-                        color: green,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ],
-                  ),
-              ],
-              gridData: const FlGridData(drawVerticalLine: false),
-              borderData: FlBorderData(show: false),
-              titlesData: FlTitlesData(
-                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 52)),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 38,
-                    getTitlesWidget: (v, meta) {
-                      final i = v.toInt();
-                      if (i >= 0 && i < values.length) {
-                        final rawLabel = values[i]['label'] as String? ?? '';
-                        final translatedLabel = isEn ? (labelMap[rawLabel] ?? rawLabel) : rawLabel;
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            translatedLabel,
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    },
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        for (final v in values)
-          Text(
-            '${isEn ? (labelMap[v['label']] ?? v['label']) : v['label']}: ${(v['value'] as num).toStringAsFixed(3)} ${res['unit']}',
-          ),
-      ],
-    );
-  }
-
   Widget areaSummaryFor(List<LatLng> pts) {
     if (pts.length < 3) return const SizedBox.shrink();
     const radius = 6371008.8;
@@ -1097,6 +1036,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 : 'No se pudo generar el resumen.')
           else ...[
             SelectableText(analysis['analysis']['summary'] as String, style: const TextStyle(fontSize: 15)),
+            if (analysis['analysis']['observations'] != null && (analysis['analysis']['observations'] as List).isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                isEn ? 'Affected areas & key points:' : 'Lugares afectados y puntos clave:',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 6),
+              for (final obs in (analysis['analysis']['observations'] as List))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• ', style: TextStyle(fontWeight: FontWeight.bold, color: green)),
+                      Expanded(child: SelectableText(obs.toString(), style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                ),
+            ],
           ],
         ],
       ),
@@ -1275,7 +1233,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       const SizedBox(height: 24),
 
-      // Módulo Bosques
       card(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1303,7 +1260,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
 
-      // Módulo Hundimiento
       card(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1331,7 +1287,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
 
-      // Módulo Glaciares
       card(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1457,33 +1412,73 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               title(t('metricsTitle')),
-              // Si ya hay una interpretación de Gemini, la mostramos primero
-              if (ai != null) ...[
+              if (aiBusy)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (ai != null) ...[
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.blue.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(t('geminiResult'), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                      const SizedBox(height: 8),
-                      SelectableText(ai!['analysis']['summary'] as String),
+                      Row(
+                        children: [
+                          const Icon(Icons.auto_awesome, color: Colors.blue, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            t('geminiResult'),
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SelectableText(
+                        ai!['analysis']['summary'] as String,
+                        style: const TextStyle(fontSize: 14, height: 1.4),
+                      ),
+                      if (ai!['analysis']['observations'] != null &&
+                          (ai!['analysis']['observations'] as List).isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          NisarApp.of(context)?.currentLocale == 'en'
+                              ? 'Key points & areas at risk:'
+                              : 'Puntos clave y zonas en riesgo:',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final obs in (ai!['analysis']['observations'] as List))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('• ', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                                Expanded(child: SelectableText(obs.toString(), style: const TextStyle(fontSize: 13))),
+                              ],
+                            ),
+                          ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 16),
+              ] else ...[
+                Text(
+                  NisarApp.of(context)?.currentLocale == 'en'
+                      ? 'Select an area and calculate metrics to view Gemini\'s interpretation here.'
+                      : 'Selecciona un área y calcula las métricas para ver aquí la interpretación de Gemini.',
+                  style: const TextStyle(color: Colors.black54, fontSize: 14),
+                ),
               ],
-              chart(result),
             ],
           ),
         ),
-        // Agregamos el buscador de Gemini también a hundimiento
         card(
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
