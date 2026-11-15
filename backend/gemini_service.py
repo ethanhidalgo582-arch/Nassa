@@ -10,62 +10,76 @@ from pydantic import ValidationError
 from config import Settings
 from schemas import AnalysisReport
 
-SYSTEM_INSTRUCTION = """Explica en español sencillo exclusivamente las métricas del contexto.
-Distingue observaciones, cálculos y supuestos. Nunca inventes riesgo, causalidad o confianza.
-LOS no equivale a hundimiento vertical. Una proyección vertical depende de supuestos y no prueba hundimiento.
-Una diferencia de cartografía OSM no demuestra deforestación. Respeta todas las limitaciones del contexto.
-No conviertas datos faltantes en ceros. No inventes tendencias ni atribuyas datos OSM a NISAR.
-Devuelve summary, observations, limitations y suggested_next_steps conforme al esquema."""
+# 👇 NUEVO PROMPT: Enfocado en lenguaje sencillo e impacto humano
+SYSTEM_INSTRUCTION_BASE = """Actúa como un comunicador científico empático y un experto en geografía.
+Tu objetivo es explicar los datos satelitales a personas sin conocimientos técnicos (ciudadanos, periodistas, líderes comunitarios).
+
+Reglas de oro para tu respuesta:
+1. EVITA LA JERGA: No uses términos como "LOS", "interferometría", "fase desenrollada", "coherencia", etc., a menos que los expliques inmediatamente con una analogía sencilla (ej: "El radar rebotó bien (coherencia alta), lo que significa que el suelo estaba firme").
+2. ENFÓCATE EN EL IMPACTO HUMANO: Responde siempre a la pregunta: "¿Qué significa esto para las personas que viven aquí?". Menciona posibles impactos en viviendas, carreteras, agricultura, agua o seguridad.
+3. SÉ CLARO Y DIRECTO: Usa oraciones cortas. Estructura el resumen en 2 o 3 párrafos fáciles de leer.
+4. MANTÉN LA HONESTIDAD: Si los datos muestran algo incierto o negativo, dilo de forma constructiva (ej: "Los datos sugieren que el suelo se está hundiendo, pero se necesita más investigación en el terreno").
+5. DISTINGUE LO QUE SABEMOS: Aclara si los datos son de bosques (mapas históricos) o de radar (movimiento físico), pero sin explicar la física detrás.
+
+Reglas técnicas (para no inventar):
+- LOS (Línea de visión) no es lo mismo que hundimiento vertical.
+- Una diferencia en los mapas de OpenStreetMap (OSM) no demuestra deforestación real, solo un cambio en el registro cartográfico.
+- Si faltan datos, dilo claramente; nunca inventes tendencias.
+
+Devuelve tu respuesta estrictamente en el formato JSON solicitado (summary, observations, limitations, suggested_next_steps)."""
 
 logger = logging.getLogger(__name__)
-
 
 class GeminiServiceError(Exception):
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
         self.status_code = status_code
 
-
 class GeminiService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        # En gemini_service.py, dentro de __init__
         self.client = genai.Client(
-    api_key=settings.gemini_api_key,
-    vertexai=False,
-    http_options=types.HttpOptions(
-        api_version='v1',  # <--- Forzamos la versión estable
-        timeout=int(settings.gemini_timeout_seconds * 1000),
-        retry_options=types.HttpRetryOptions(attempts=1),
-    ),
-)
+            api_key=settings.gemini_api_key,
+            vertexai=False,
+            http_options=types.HttpOptions(
+                api_version='v1',
+                timeout=int(settings.gemini_timeout_seconds * 1000),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
 
     async def close(self):
         if self.client is not None:
             await self.client.aio.aclose()
             self.client.close()
 
-    async def analyze(self, context: dict, question: str) -> AnalysisReport:
+    async def analyze(self, context: dict, question: str, locale: str = "es") -> AnalysisReport:
         if self.client is None:
             raise GeminiServiceError(503, "Gemini aún no está configurado en el servidor.")
+            
+        # Inyectar el idioma en la instrucción del sistema
+        idioma = "inglés" if locale == "en" else "español"
+        system_instruction = f"IMPORTANTE: Responde estrictamente en {idioma}.\n\n" + SYSTEM_INSTRUCTION_BASE
+
         try:
             async with asyncio.timeout(self.settings.gemini_timeout_seconds):
                 response = await self.client.aio.models.generate_content(
                     model=self.settings.gemini_model,
                     contents=json.dumps({"context": context, "question": question}, ensure_ascii=False),
                     config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
+                        system_instruction=system_instruction,
                         response_mime_type="application/json",
                         response_schema=AnalysisReport,
                         max_output_tokens=4096,
                         candidate_count=1,
+                        # 👇 Aumentamos la temperatura ligeramente para que el lenguaje sea más natural y empático
+                        temperature=0.3, 
                     ),
                 )
         except (TimeoutError, httpx.TimeoutException) as exc:
             logger.error("Gemini timeout: %s", exc)
             raise GeminiServiceError(504, "Gemini tardó demasiado. Intenta nuevamente.") from exc
         except errors.APIError as exc:
-            # Log del código y mensaje reales de Gemini (recortado para no inundar la consola)
             logger.error(
                 "Gemini APIError code=%s status=%s message=%s",
                 getattr(exc, "code", None),

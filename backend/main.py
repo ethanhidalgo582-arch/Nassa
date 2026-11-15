@@ -74,22 +74,18 @@ def create_app(settings=None):
     
     @app.post("/api/v1/metrics")
     async def metrics(payload: MetricsRequest):
-        # 1. Crear firma única
         firma = f"{payload.module}|{payload.date_a}|{payload.date_b}|{str(payload.polygon)}"
         
-        # 2. Si ya está en caché, devolver al instante
         if firma in app.state.results:
             print("⚡ Respondiendo al instante desde caché en main.py")
             return app.state.results[firma]
 
-        # 3. Si el servidor está ocupado, avisamos (202)
         if app.state.busy:
             return JSONResponse(
                 status_code=202, 
                 content={"status": "processing", "message": "El servidor está procesando otra solicitud. Espera un momento."}
             )
 
-        # 4. Si no está en caché, procesamos de forma normal (síncrona)
         app.state.busy = True
         try:
             print("🚀 Iniciando cálculo...")
@@ -99,7 +95,6 @@ def create_app(settings=None):
             result_id = uuid.uuid4().hex
             result.update(result_id=result_id, _timestamp=now)
             
-            # Guardamos en la caché de main.py
             app.state.results[firma] = result
             print("✅ Cálculo completado y guardado en caché.")
             return result
@@ -112,7 +107,6 @@ def create_app(settings=None):
         
     @app.post("/api/v1/ai/interpret")
     async def interpret(payload: InterpretRequest):
-        # Buscamos el resultado iterando sobre la caché usando el result_id real
         encontrado = None
         for firma, datos in app.state.results.items():
             if isinstance(datos, dict) and datos.get("result_id") == payload.result_id:
@@ -124,12 +118,13 @@ def create_app(settings=None):
             
         context = {k:v for k,v in encontrado.items() if k not in ("map","map_a","map_b","points","snapshots","_timestamp")}
         
-        pregunta_final = payload.question
+        pregunta_final = payload.question or "Explica estas métricas y sus limitaciones."
         if payload.user_context:
             pregunta_final += f"\n\n[CONTEXTO DEL USUARIO]: El usuario indica lo siguiente sobre su situación: '{payload.user_context}'. Por favor, responde explicando cómo le afecta esto directamente a él o a su comunidad."
             
         try:
-            report = await app.state.gemini.analyze(context, pregunta_final)
+            # 👇 AQUÍ PASAMOS EL IDIOMA AL SERVICIO DE GEMINI
+            report = await app.state.gemini.analyze(context, pregunta_final, locale=payload.locale or "es")
             return {
                 "analysis": report.model_dump(),
                 "notice": "Interpretación de IA; las métricas se conservan por separado.",

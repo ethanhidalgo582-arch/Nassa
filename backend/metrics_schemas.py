@@ -28,5 +28,6 @@ class MetricsRequest(BaseModel):
 class InterpretRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     result_id: str
-    question: str = Field(default="Explica estas métricas y sus limitaciones.", min_length=1, max_length=1000)
-    user_context: str | None = Field(default=None, max_length=1000) # 👈 NUEVO CAMPO
+    question: str = Field(default="Explica estas métricas y sus limitaciones.", max_length=1000)
+    user_context: str | None = Field(default=None, max_length=1000)
+    locale: str | None = Field(default="es", description="Idioma para la respuesta ('es' o 'en')") # 👈 NUEVO CAMPO
