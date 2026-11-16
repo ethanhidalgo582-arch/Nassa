@@ -22,6 +22,11 @@ COPY mobile/ ./
 RUN flutter build web --release --dart-define=API_BASE_URL=/api/v1
 
 FROM python:3.14-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1
 ENV WEB_DIR=/app/web
 
