@@ -5,11 +5,12 @@ RUN flutter pub get
 COPY mobile/ ./
 RUN flutter build web --release --dart-define=API_BASE_URL=/api/v1
 
-FROM python:3.11-slim
+FROM python:3.14-slim
 ENV PYTHONUNBUFFERED=1
+ENV WEB_DIR=/app/web
 WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend /app/mobile/build/web /app/web
-CMD ["sh", "-c", "exec uvicorn render_app:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
