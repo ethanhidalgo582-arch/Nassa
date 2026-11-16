@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Text-to-speech with Gemini: reads the computed summary + the Gemini interpretation.
 
 Gemini TTS returns raw 16-bit PCM (mime like ``audio/L16;codec=pcm;rate=24000``); it is
@@ -23,10 +25,7 @@ PREFERRED_MODELS = (
     "gemini-2.5-flash-preview-tts",
 )
 VOICES = {"es": os.getenv("GEMINI_TTS_VOICE_ES", "Kore"), "en": os.getenv("GEMINI_TTS_VOICE_EN", "Kore")}
-STYLE = {
-    "es": "Lee en español, con voz clara, cálida y pausada, como una persona que explica resultados a otra:",
-    "en": "Read in English, with a clear, warm and unhurried voice, like someone explaining results to another person:",
-}
+# No style/instruction text is sent: TTS models sometimes read it aloud. Only on-screen text is spoken.
 MAX_CHARS = 3800
 
 _model_lock = threading.Lock()
@@ -42,7 +41,11 @@ def build_parts(result: dict, interpretation: dict | None, locale: str) -> list[
         a = interpretation.get("answer", {})
         intro = "Explicación de la inteligencia artificial." if locale == "es" else "Explanation from the artificial intelligence."
         cannot = "Lo que no se puede concluir:" if locale == "es" else "What cannot be concluded:"
-        texts = [intro, a.get("summary", ""), a.get("pattern", ""), a.get("meaning", "")]
+        alert = "Aviso para la población cercana:" if locale == "es" else "Heads-up for people nearby:"
+        texts = [intro, a.get("summary", "")]
+        if (a.get("people_alert") or "").strip():
+            texts += [alert, a["people_alert"]]
+        texts += [a.get("pattern", ""), a.get("meaning", "")]
         if a.get("cannot_conclude"):
             texts += [cannot, *a["cannot_conclude"]]
         parts.append(" ".join(t.strip() for t in texts if t and t.strip()))
@@ -123,7 +126,7 @@ def synthesize(result: dict, interpretation: dict | None, locale: str, settings,
     try:
         resp = client.models.generate_content(
             model=model,
-            contents=f"{STYLE[locale]}\n\n{text}",
+            contents=text,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(

@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Manual end-to-end check (consumes one Gemini request and reads real Hansen data).
 
 Usage (from backend/):  python scripts/check_gemini.py

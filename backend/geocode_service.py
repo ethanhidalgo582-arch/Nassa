@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Place search through the server (no autocomplete, cached, <= 1 request/second).
 
 Nominatim usage policy: identify the app, max 1 req/s, cache results, no autocomplete.

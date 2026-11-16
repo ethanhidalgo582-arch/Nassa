@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Glacier outlines mapped in OpenStreetMap (natural=glacier), clipped to the selection.
 
 Used as a thematic layer and to separate on-ice from off-ice pixels. OSM outlines are

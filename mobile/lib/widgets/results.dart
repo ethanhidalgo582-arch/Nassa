@@ -1,3 +1,5 @@
+// AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+// Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -34,6 +36,7 @@ class SummaryCard extends StatelessWidget {
       if (answer != null) ...[
         tr(context, 'ai'),
         answer['summary'],
+        if ((answer['people_alert']?.toString() ?? '').trim().isNotEmpty) ...[tr(context, 'ai.alert'), answer['people_alert']],
         answer['pattern'],
         answer['meaning'],
         tr(context, 'ai.cannot'),
@@ -444,6 +447,28 @@ class AiCard extends StatelessWidget {
           else ...[
             SelectableText(answer['summary']?.toString() ?? '', style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
+            if ((answer['people_alert']?.toString() ?? '').trim().isNotEmpty)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xfffff4e5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Palette.warning.withValues(alpha: 0.5)),
+                ),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.warning_amber_rounded, color: Palette.warning),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(tr(context, 'ai.alert'), style: const TextStyle(fontWeight: FontWeight.w700, color: Palette.warning)),
+                      const SizedBox(height: 4),
+                      SelectableText(answer['people_alert'].toString()),
+                    ]),
+                  ),
+                ]),
+              ),
             for (final (k, label) in [('what_changed', 'ai.what'), ('how_much', 'ai.how'), ('pattern', 'ai.pattern'), ('meaning', 'ai.meaning')])
               if ((answer[k]?.toString() ?? '').isNotEmpty)
                 Padding(

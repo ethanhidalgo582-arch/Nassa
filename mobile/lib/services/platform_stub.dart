@@ -1,3 +1,5 @@
+// AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+// Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 import 'dart:typed_data';
 
 // Non-web platforms: no browser speech engine. The UI explains it and keeps the text.

@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 # Arranque local en Windows: backend (FastAPI, puerto 8000) + frontend Flutter en Chrome.
 # Requisitos: haber ejecutado Instalar.ps1 y tener backend/.env con tus claves.
 $ErrorActionPreference = "Stop"

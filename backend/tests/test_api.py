@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """API, job and interpretation tests. All data here is TEST-ONLY and synthetic."""
 import time
 import types
@@ -224,7 +226,7 @@ def test_gemini_speech_returns_wav_in_requested_language(monkeypatch, tmp_path):
         assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
         assert r.content[:4] == b"RIFF" and r.content[8:12] == b"WAVE"
         assert sent["model"] == "gemini-2.5-flash-preview-tts"
-        assert "Read in English" in sent["text"] and "hectares" in sent["text"]  # English text, spelled-out units
+        assert "Read in English" not in sent["text"] and "hectares" in sent["text"]  # only on-screen text, spelled-out units
         r_es = c.post("/api/v1/speech", json={"result_id": rid, "locale": "es"})
         assert r_es.status_code == 200 and "hectáreas" in sent["text"]
 
@@ -233,3 +235,29 @@ def test_speech_without_key_is_explicit(client):
     job = wait(client, client.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
     r = client.post("/api/v1/speech", json={"result_id": job["result"]["result_id"], "locale": "es"})
     assert r.status_code == 503 and r.json()["detail"]["kind"] == "not_configured"
+
+
+def test_nisar_uses_saved_backup_when_live_is_slow(monkeypatch, tmp_path):
+    """Live NISAR data that takes longer than the budget -> the saved backup is returned at once."""
+    import nisar_service
+    import respaldo
+
+    monkeypatch.setattr(respaldo, "DIR", tmp_path / "backups")
+    fast = {"module": "hundimiento", "metrics": {"median_los_mm": -12.0}, "limitations": {"es": [], "en": []}}
+    monkeypatch.setattr(nisar_service, "analyze_subsidence", lambda *a, **k: dict(fast))
+    monkeypatch.setattr(summaries, "build", lambda r: {"es": {"headline": "h", "points": [], "speech": "s"},
+                                                       "en": {"headline": "h", "points": [], "speech": "s"}})
+    settings = Settings(earthdata_token="t", nisar_live_budget_seconds=1)
+    app = main.create_app(settings, web_dir=tmp_path)
+    with TestClient(app) as c:
+        # 1) first live run succeeds and saves the backup
+        job = wait(c, c.post("/api/v1/analyses", json={"module": "hundimiento", "polygon": POLY}).json())
+        assert job["status"] == "done" and "backup" not in job["result"]
+        assert list((tmp_path / "backups").glob("hundimiento_*.json"))
+        # 2) live data is now slow -> backup, clearly marked
+        monkeypatch.setattr(nisar_service, "analyze_subsidence", lambda *a, **k: (time.sleep(4), dict(fast))[1])
+        job = wait(c, c.post("/api/v1/analyses", json={"module": "hundimiento", "polygon": POLY,
+                                                       "start_date": "2026-01-01"}).json())
+        assert job["status"] == "done" and job["result"]["backup"]["reason"] == "slow"
+        assert job["result"]["metrics"]["median_los_mm"] == -12.0
+        assert "respaldo" in job["result"]["limitations"]["es"][0]

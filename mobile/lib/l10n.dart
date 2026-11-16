@@ -1,3 +1,5 @@
+// AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+// Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 import 'package:flutter/widgets.dart';
 
 /// Locale controller shared by the whole app (es / en).
@@ -150,6 +152,7 @@ const _strings = <String, Map<String, String>>{
     'ai.how': '¿Cuánto y en qué período?',
     'ai.pattern': '¿Qué patrón se observa?',
     'ai.meaning': '¿Qué podría significar?',
+    'ai.alert': 'Aviso para la población cercana',
     'ai.cannot': 'Lo que no puede concluirse',
     'ai.not_configured': 'La explicación con IA no está activada en este servidor (falta GEMINI_API_KEY). El resumen de arriba se calcula sin IA y está completo.',
     'ai.disclaimer': 'Texto generado por IA a partir de las métricas calculadas. Revísalo antes de usarlo para decidir.',
@@ -319,6 +322,7 @@ const _strings = <String, Map<String, String>>{
     'ai.how': 'How much and over which period?',
     'ai.pattern': 'What pattern is visible?',
     'ai.meaning': 'What could it mean?',
+    'ai.alert': 'Heads-up for people nearby',
     'ai.cannot': 'What cannot be concluded',
     'ai.not_configured': 'AI explanation is not enabled on this server (GEMINI_API_KEY missing). The summary above is computed without AI and is complete.',
     'ai.disclaimer': 'AI-generated text based on the computed metrics. Review it before using it for decisions.',

@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """NISAR L2 GUNW access and InSAR measurements (subsidence and glaciers).
 
 Product layout follows JPL D-102272 Rev E (NISAR L2 GUNW Product Specification):

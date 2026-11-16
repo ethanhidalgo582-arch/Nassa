@@ -1,8 +1,12 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """IMPACT API (FastAPI). Serves the Flutter web build from the same origin when available."""
 from __future__ import annotations
 
 import logging
 import os
+import time
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -20,6 +24,7 @@ import gemini_service
 import geocode_service
 import glacier_outlines
 import nisar_service
+import respaldo
 import summaries
 import tts_service
 from config import APP_NAME, APP_VERSION, BACKEND_DIR, Settings, user_agent
@@ -181,6 +186,47 @@ def create_app(settings: Settings | None = None, web_dir: Path | None = None) ->
         payload = {"polygon": [[round(p[0], 6), round(p[1], 6)] for p in req.polygon], **params}
 
         def run(stage, check):
+            if req.module == "bosques":
+                return live(stage, check)
+            # NISAR: try live data for a short budget; if it is slow or fails, answer with the
+            # saved backup of this area (when one exists). The live download keeps going in the
+            # background and refreshes the backup when it finishes.
+            backup = respaldo.load(req.module, sel)
+            answered = []  # set once the job has answered; the background download stops touching it
+
+            def bg_stage(name):
+                if not answered:
+                    stage(name)
+
+            def live_and_save():
+                result = live(bg_stage, check)
+                result.setdefault("generated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                respaldo.save(req.module, sel, result)
+                return result
+
+            if backup is None:
+                return live_and_save()
+            future = respaldo.background.submit(live_and_save)
+            try:
+                return future.result(timeout=settings.nisar_live_budget_seconds)
+            except FutureTimeout:
+                log.info("live NISAR data is slow; answering with the saved backup")
+                answered.append(True)
+                return respaldo.as_backup(backup, "slow")
+            except AnalysisError as e:
+                if e.kind in ("invalid_input", "cancelled"):
+                    raise
+                log.info("live NISAR data failed (%s); answering with the saved backup", e.kind)
+                answered.append(True)
+                return respaldo.as_backup(backup, "error")
+            except Exception as e:
+                if type(e).__name__ == "Cancelled":
+                    raise
+                log.warning("live NISAR data failed; answering with the saved backup", exc_info=True)
+                answered.append(True)
+                return respaldo.as_backup(backup, "error")
+
+        def live(stage, check):
             if req.module == "bosques":
                 result = forest_service.analyze(sel, params["start_year"], params["end_year"], params["canopy_threshold"],
                                                 max_pixels=settings.max_forest_pixels, stage=stage)

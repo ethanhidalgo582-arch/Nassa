@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Geometry helpers: validation, equal-area measurements and map rasters.
 
 All user polygons arrive as [[lat, lon], ...]. Internally shapely uses (lon, lat).

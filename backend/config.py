@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Runtime configuration read from environment variables.
 
 Secrets (GEMINI_API_KEY, EARTHDATA_*) are only read here, on the server.
@@ -45,6 +47,7 @@ class Settings:
     nisar_collections: tuple[str, ...] = ("NISAR_L2_GUNW_V1", "NISAR_L2_GUNW_PROVISIONAL_V1")
     nisar_max_pairs: int = 6
     nisar_access_mode: str = "stream"  # stream (HTTP range reads) | download
+    nisar_live_budget_seconds: int = 30  # wait this long for live data before using the saved backup
 
     allowed_origins: tuple[str, ...] = ()
     public_app_url: str = ""
@@ -89,6 +92,7 @@ class Settings:
             nisar_collections=collections or ("NISAR_L2_GUNW_V1",),
             nisar_max_pairs=_int("NISAR_MAX_PAIRS", 6, 1, 30),
             nisar_access_mode=mode if mode in ("stream", "download") else "stream",
+            nisar_live_budget_seconds=_int("NISAR_LIVE_BUDGET_SECONDS", 30, 5, 3600),
             allowed_origins=origins,
             public_app_url=os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/"),
             carto_api_key=os.getenv("CARTO_API_KEY", "").strip(),

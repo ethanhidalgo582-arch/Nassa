@@ -1,3 +1,5 @@
+# AI-generated content: this file contains code generated with the help of artificial intelligence (Claude, Anthropic).
+# Contenido generado con IA: este archivo contiene código generado con ayuda de inteligencia artificial (Claude, Anthropic).
 """Deterministic, bilingual summaries built only from backend metrics.
 
 The same text is shown on screen and read aloud. A "speech" variant spells out units
