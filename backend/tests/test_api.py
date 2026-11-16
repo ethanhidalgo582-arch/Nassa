@@ -1,162 +1,235 @@
-import asyncio
-from unittest.mock import AsyncMock
+"""API, job and interpretation tests. All data here is TEST-ONLY and synthetic."""
+import time
+import types
+
+import numpy as np
 import pytest
-from pydantic import ValidationError
-from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+import forest_service
+import gemini_service
 import main
+import summaries
 from config import Settings
-from metrics_schemas import MetricsRequest, InterpretRequest
-from schemas import AnalysisReport
-from analysis_service import DataUnavailable
+from errors import AnalysisError
+from geo import parse_selection
 
-def req(**changes):
-    data=dict(module="bosques",polygon=[(14.60,-90.5),(14.60,-90.4),(14.7,-90.4)],date_a="2025-01-01",date_b="2025-02-01")
-    return MetricsRequest(**(data|changes))
-def complete(coro):
-    try: coro.send(None)
-    except StopIteration as e: return e.value
-    raise AssertionError("Unexpected asynchronous suspension")
+POLY = [[17.30, -90.10], [17.30, -90.05], [17.25, -90.05], [17.25, -90.10]]
+
+
+def wait(client, job, timeout=10):
+    t = time.time()
+    while job["status"] in ("queued", "running"):
+        assert time.time() - t < timeout, job
+        time.sleep(0.05)
+        job = client.get(f"/api/v1/analyses/{job['job_id']}").json()
+    return job
+
+
+def synthetic_reader(layer, win):
+    """TEST-ONLY Hansen-like layers: land everywhere, forest in the west half, loss in 2018 in a stripe."""
+    h, w = win.height, win.width
+    if layer == "datamask":
+        a = np.ones((h, w), np.uint8)
+        a[: h // 10] = 0  # top 10 % without data
+        return a
+    if layer == "treecover2000":
+        a = np.zeros((h, w), np.uint8)
+        a[:, : w // 2] = 80
+        return a
+    a = np.zeros((h, w), np.uint8)
+    a[h // 2: h // 2 + h // 10, : w // 2] = 18  # loss in 2018
+    return a
+
+
 @pytest.fixture
-def routes(monkeypatch):
-    app=main.create_app(Settings())
-    async def inline(fn,*a): return fn(*a)
-    monkeypatch.setattr(asyncio,"to_thread",inline)
-    return app,{r.path:r.endpoint for r in app.routes}
-@pytest.mark.parametrize("change",[
-    {"date_a":"2025-03-01"},{"date_b":"2099-01-01"},{"polygon":[(0,0)]*3},
-    {"polygon":[(float("nan"),0),(1,1),(2,2)]},{"min_coherence":2},
-    {"incidence_deg":90},{"module":"unknown"}])
-def test_reject_invalid(change):
-    with pytest.raises(ValidationError): req(**change)
-def test_no_fabricated_metrics(routes):
-    app,r=routes
-    assert r["/api/v1/dashboard-stats"]()["criticalAreaKm2"] is None
-    assert r["/api/v1/classified-zones"]()["features"]==[]
-    with pytest.raises(HTTPException) as e:r["/api/v1/displacement"](0,0)
-    assert e.value.status_code==409
-def test_metrics_survive_ai_failure(routes,monkeypatch):
-    app,r=routes
-    monkeypatch.setattr(main,"calculate",lambda p:{"module":p.module,"chart":[{"label":"fixture","value":3}],"limitations":["fixture"]})
-    result=complete(r["/api/v1/metrics"](req()))
-    with pytest.raises(HTTPException) as e:
-        complete(r["/api/v1/ai/interpret"](InterpretRequest(result_id=result["result_id"])))
-    assert e.value.status_code==503
-    assert app.state.results[result["result_id"]][1]["chart"][0]["value"]==3
-def test_provider_failure_is_not_zero(routes,monkeypatch):
-    app,r=routes
-    def fail(p):raise DataUnavailable("OSM unavailable")
-    monkeypatch.setattr(main,"calculate",fail)
-    with pytest.raises(HTTPException) as e:complete(r["/api/v1/metrics"](req()))
-    assert e.value.status_code==422
-    assert not app.state.busy and not app.state.results
-def test_server_owns_context(routes,monkeypatch):
-    app,r=routes
-    monkeypatch.setattr(main,"calculate",lambda p:{"measurement":"fixture","points":[{"value":4}],"source":"test"})
-    result=complete(r["/api/v1/metrics"](req()))
-    app.state.gemini.analyze=AsyncMock(return_value=AnalysisReport(summary="test",observations=["test"],limitations=["test"],suggested_next_steps=["test"]))
-    complete(r["/api/v1/ai/interpret"](InterpretRequest(result_id=result["result_id"])))
-    context=app.state.gemini.analyze.call_args.args[0]
-    assert context["source"]=="test" and "points" not in context
-def test_expired_result(routes):
-    app,r=routes
-    with pytest.raises(HTTPException) as e:complete(r["/api/v1/ai/interpret"](InterpretRequest(result_id="missing")))
-    assert e.value.status_code==404
-def test_busy_guard(routes):
-    app,r=routes;app.state.busy=True
-    with pytest.raises(HTTPException) as e:complete(r["/api/v1/metrics"](req()))
-    assert e.value.status_code==429
+def client(monkeypatch, tmp_path):
+    real = forest_service.analyze
+    monkeypatch.setattr(forest_service, "analyze", lambda *a, **k: real(*a, **{**k, "reader": synthetic_reader}))
+    app = main.create_app(Settings(job_timeout_seconds=60), web_dir=tmp_path / "noweb")
+    with TestClient(app) as c:
+        yield c
 
-def test_gunw_crop_and_units(tmp_path,monkeypatch):
-    np=pytest.importorskip("numpy");h5py=pytest.importorskip("h5py")
-    pytest.importorskip("shapely");pytest.importorskip("pyproj")
-    import analysis_service as service
-    path=tmp_path/"fixture.h5"
-    with h5py.File(path,"w") as f:
-        ident=f.create_group("/science/LSAR/identification")
-        ident["referenceZeroDopplerStartTime"]=b"2025-02-01T00:00:00"
-        ident["secondaryZeroDopplerStartTime"]=b"2025-01-01T00:00:00"
-        grid=f.create_group("/science/LSAR/GUNW/grids/frequencyA")
-        grid["xCoordinates"]=np.array([-90.52,-90.48,-90.44,-90.40])
-        grid["yCoordinates"]=np.array([14.58,14.62,14.66,14.70])
-        grid["projection"]=4326;grid["centerFrequency"]=1.25e9
-        pol=grid.create_group("unwrappedInterferogram/HH")
-        pol["unwrappedPhase"]=np.ones((4,4))
-        pol["coherenceMagnitude"]=np.ones((4,4))*.9
-        pol["connectedComponents"]=np.ones((4,4),dtype="uint8")
-    monkeypatch.setattr(service,"matching_file",lambda r:path)
-    result=service.radar_metrics(req(module="desplazamiento"))
-    assert result["valid_pixels"]>0
-    assert result["mean"]==pytest.approx(-299792458/1.25e9/(4*np.pi)*1000,abs=.001)
-    assert len(result["points"])<=900
-    with pytest.raises(DataUnavailable):service.radar_metrics(req(module="hundimiento"))
 
-def test_auto_dates_and_selection():
-    from metrics_schemas import MetricsRequest
-    r=MetricsRequest(module="desplazamiento",polygon=[(14.6,-90.5),(14.6,-90.4),(14.7,-90.4)])
-    assert r.date_a is None and r.date_b is None
-    with pytest.raises(ValidationError):
-        MetricsRequest(module="bosques",polygon=r.polygon,date_a="2025-01-01")
+def test_health_is_light(client):
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    cfg = client.get("/api/v1/config").json()
+    assert cfg["app"] == "IMPACT" and "gemini_api_key" not in str(cfg).lower()
 
-def test_incidence_cube_and_projection(tmp_path):
-    np=pytest.importorskip("numpy");h5py=pytest.importorskip("h5py")
-    pytest.importorskip("pyproj");pytest.importorskip("shapely")
-    import math, analysis_service as service
-    path=tmp_path/"angle.h5"
-    with h5py.File(path,"w") as f:
-        g=f.create_group("/science/LSAR/GUNW/metadata/radarGrid")
-        g["xCoordinates"]=np.array([-90.6,-90.4]);g["yCoordinates"]=np.array([14.6,14.8]);g["projection"]=4326
-        d=g.create_dataset("incidenceAngle",data=np.full((2,2,2),35.0));d.attrs["units"]="degrees"
-    with h5py.File(path,"r") as f:
-        angle,lo,hi=service.incidence_for_valid_pixels(f,4326,np.array([[-90.5]]),np.array([[14.7]]),np.array([[True]]))
-        assert (angle,lo,hi)==(35,35,35)
-        assert 10/math.cos(math.radians(angle))==pytest.approx(12.2077458876)
-    with h5py.File(path,"a") as f:f["/science/LSAR/GUNW/metadata/radarGrid/incidenceAngle"][1,0,0]=40
-    with h5py.File(path,"r") as f:
-        with pytest.raises(DataUnavailable):service.incidence_for_valid_pixels(f,4326,np.array([[-90.5]]),np.array([[14.7]]),np.array([[True]]))
 
-def test_forest_comparison_unions_overlapping_polygons(monkeypatch):
-    pytest.importorskip("osmnx");pytest.importorskip("pyproj")
-    import analysis_service as service, httpx
-    # Two identical ways represent the same forest. Area must not be counted twice.
-    nodes=[{"type":"node","id":1,"lat":14.600,"lon":-90.500},{"type":"node","id":2,"lat":14.600,"lon":-90.490},
-           {"type":"node","id":3,"lat":14.610,"lon":-90.490},{"type":"node","id":4,"lat":14.610,"lon":-90.500}]
-    ways=[{"type":"way","id":10,"nodes":[1,2,3,4,1],"tags":{"natural":"wood"}},
-          {"type":"way","id":11,"nodes":[1,2,3,4,1],"tags":{"natural":"wood"}}]
-    class Response:
-        def raise_for_status(self):pass
-        def json(self):
-            from copy import deepcopy
-            return {"elements":deepcopy(nodes+ways)}
-    monkeypatch.setattr(httpx,"post",lambda *a,**k:Response())
-    result=service.forest_metrics(req(polygon=[(14.59,-90.51),(14.59,-90.48),(14.62,-90.48),(14.62,-90.51)]))
-    assert result["snapshots"][0]["area_ha"]==pytest.approx(119.3,rel=0.04)
-    assert result["delta"]==0
-    assert result["chart"][0]["value"]==result["snapshots"][0]["area_ha"]
+def test_forest_flow_real_math_on_test_layers(client):
+    job = client.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY, "start_year": 2016, "end_year": 2020}).json()
+    job = wait(client, job)
+    assert job["status"] == "done", job
+    r = job["result"]
+    m = r["metrics"]
+    # no data is excluded, not counted as forest or zero loss
+    assert 85 < m["valid_data_pct"] < 95 and m["no_data_area_ha"] > 0
+    assert 0 < m["loss_ha"] < m["forest_start_ha"]
+    assert abs(m["loss_pct_of_forest_start"] - 100 * m["loss_ha"] / m["forest_start_ha"]) < 0.2
+    years = {a["year"]: a["loss_ha"] for a in r["annual_loss"]}
+    assert set(years) == {2016, 2017, 2018, 2019, 2020} and years[2018] > 0 and years[2017] == 0
+    assert r["layers"]["loss"]["image_base64"] and r["legend"]["loss_classes"]
+    assert r["summary"]["es"]["speech"] and r["summary"]["en"]["speech"] != r["summary"]["es"]["speech"]
+    assert "2018" in r["summary"]["en"]["headline"] + " ".join(r["summary"]["en"]["points"])
 
-def test_full_hundimiento_automatic(tmp_path,monkeypatch):
-    np=pytest.importorskip("numpy");h5py=pytest.importorskip("h5py")
-    pytest.importorskip("pyproj");pytest.importorskip("shapely")
-    import math,analysis_service as service
-    path=tmp_path/"product.h5"
-    with h5py.File(path,"w") as f:
-        ident=f.create_group("/science/LSAR/identification")
-        ident["referenceZeroDopplerStartTime"]=b"2025-01-01T00:00:00"
-        ident["secondaryZeroDopplerStartTime"]=b"2025-02-01T00:00:00"
-        grid=f.create_group("/science/LSAR/GUNW/grids/frequencyA")
-        grid["xCoordinates"]=np.array([-90.52,-90.48,-90.44,-90.40])
-        grid["yCoordinates"]=np.array([14.58,14.62,14.66,14.70])
-        grid["projection"]=4326;grid["centerFrequency"]=1.25e9
-        pol=grid.create_group("unwrappedInterferogram/HH")
-        pol["unwrappedPhase"]=np.ones((4,4));pol["coherenceMagnitude"]=np.ones((4,4))*.9
-        pol["connectedComponents"]=np.ones((4,4),dtype="uint8")
-        g=f.create_group("/science/LSAR/GUNW/metadata/radarGrid")
-        g["xCoordinates"]=np.array([-90.53,-90.39]);g["yCoordinates"]=np.array([14.57,14.71]);g["projection"]=4326
-        d=g.create_dataset("incidenceAngle",data=np.full((2,2,2),35.0));d.attrs["units"]="degrees"
-    monkeypatch.setattr(service,"matching_file",lambda r:path)
-    los=service.radar_metrics(req(module="desplazamiento"))
-    vertical=service.radar_metrics(req(module="hundimiento"))
-    assert vertical["incidence_deg"]==35
-    assert vertical["mean"]==pytest.approx(los["mean"]/math.cos(math.radians(35)),abs=.002)
-    assert vertical["date_a"]=="2025-01-01" and vertical["date_b"]=="2025-02-01"
-    assert 0<vertical["valid_coverage_pct"]<=100
 
+def test_duplicate_requests_share_job(client):
+    body = {"module": "bosques", "polygon": POLY, "start_year": 2016, "end_year": 2018}
+    a = client.post("/api/v1/analyses", json=body).json()
+    b = client.post("/api/v1/analyses", json=body).json()
+    assert a["job_id"] == b["job_id"]
+
+
+def test_errors_are_not_sticky_and_can_retry(client, monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise AnalysisError("provider_error", "x", "y", retryable=True)
+        return {"module": "bosques", "metrics": {"forest_start_ha": 0, "loss_ha": 0, "valid_data_pct": 100, "selected_area_ha": 1},
+                "period": {"start_year": 2016, "end_year": 2017}, "parameters": {"canopy_threshold_pct": 30}, "annual_loss": []}
+    monkeypatch.setattr(forest_service, "analyze", flaky)
+    body = {"module": "bosques", "polygon": POLY, "start_year": 2016, "end_year": 2017}
+    j1 = wait(client, client.post("/api/v1/analyses", json=body).json())
+    assert j1["status"] == "error" and j1["error"]["retryable"]
+    j2 = wait(client, client.post("/api/v1/analyses", json=body).json())
+    assert j2["job_id"] != j1["job_id"] and j2["status"] == "done"
+
+
+def test_timeout_releases_slot(monkeypatch, tmp_path):
+    def slow(*a, stage=None, **k):
+        time.sleep(1.5)
+        stage("processing")
+    monkeypatch.setattr(forest_service, "analyze", slow)
+    app = main.create_app(Settings(job_timeout_seconds=1), web_dir=tmp_path)
+    with TestClient(app) as c:
+        j = wait(c, c.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
+        assert j["status"] == "error" and j["error"]["kind"] == "timeout"
+        assert app.state.jobs.stats()["running"] == 0
+
+
+def test_invalid_selection(client):
+    r = client.post("/api/v1/analyses", json={"module": "bosques", "polygon": [[0, 0], [0, 1], [0, 0]]})
+    assert r.status_code == 422
+    big = [[10, 10], [10, 20], [0, 20], [0, 10]]
+    r = client.post("/api/v1/analyses", json={"module": "bosques", "polygon": big})
+    assert r.status_code == 422 and r.json()["detail"]["message"]["en"]
+
+
+def test_nisar_without_credentials_is_explicit(client):
+    r = client.post("/api/v1/analyses", json={"module": "hundimiento", "polygon": POLY})
+    assert r.status_code == 503 and r.json()["detail"]["kind"] == "not_configured"
+
+
+def test_unknown_job_and_result(client):
+    assert client.get("/api/v1/analyses/nope").status_code == 404
+    assert client.post("/api/v1/interpret", json={"result_id": "missing-123", "locale": "es"}).status_code == 404
+
+
+def test_interpret_not_configured_keeps_results(client):
+    job = wait(client, client.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
+    r = client.post("/api/v1/interpret", json={"result_id": job["result"]["result_id"], "locale": "en"})
+    assert r.status_code == 503 and r.json()["detail"]["kind"] == "not_configured"
+
+
+def test_interpret_verifies_numbers(monkeypatch, tmp_path):
+    monkeypatch.setattr(forest_service, "analyze", lambda *a, **k: _fake_forest_result())
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, model, contents, config):
+            captured["contents"] = contents
+            return types.SimpleNamespace(text='{"summary":"Se perdieron 999 ha (inventado) y 12 ha.","what_changed":"a",'
+                                              '"how_much":"12 ha entre 2016 y 2020","pattern":"p","meaning":"m","cannot_conclude":["c"]}')
+
+    class FakeClient:
+        def __init__(self, **k):
+            self.models = FakeModels()
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", FakeClient)
+    app = main.create_app(Settings(gemini_api_key="test-key"), web_dir=tmp_path)
+    with TestClient(app) as c:
+        job = wait(c, c.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
+        out = c.post("/api/v1/interpret", json={"result_id": job["result"]["result_id"], "locale": "es"}).json()
+    assert out["verification"]["unverified_numbers"] == ["999"]
+    assert "image_base64" not in captured["contents"] and "test-key" not in captured["contents"]
+
+
+def _fake_forest_result():
+    return {"module": "bosques", "metrics": {"forest_start_ha": 100.0, "loss_ha": 12.0, "loss_pct_of_forest_start": 12.0,
+                                             "valid_data_pct": 100.0, "selected_area_ha": 200.0, "peak_loss_year": 2018},
+            "period": {"start_year": 2016, "end_year": 2020}, "parameters": {"canopy_threshold_pct": 30},
+            "annual_loss": [{"year": 2018, "loss_ha": 12.0}], "layers": {"loss": {"image_base64": "AAAA"}},
+            "measurement": {"es": "x", "en": "x"}, "limitations": {"es": ["l"], "en": ["l"]}}
+
+
+def test_summary_zero_vs_missing():
+    r = _fake_forest_result()
+    r["metrics"].update(loss_ha=0.0, loss_pct_of_forest_start=0.0, peak_loss_year=None)
+    s = summaries.build(r)
+    assert "No se detectó" in s["es"]["headline"] and "No tree-cover loss" in s["en"]["headline"]
+    r["metrics"]["forest_start_ha"] = 0
+    assert "no hay base" in summaries.build(r)["es"]["headline"]
+
+
+def test_spa_fallback(tmp_path):
+    (tmp_path / "index.html").write_text("<html>IMPACT</html>")
+    (tmp_path / "assets").mkdir()
+    with TestClient(main.create_app(Settings(), web_dir=tmp_path)) as c:
+        assert "IMPACT" in c.get("/hundimiento").text
+        assert c.get("/api/v1/nope").status_code == 404
+        assert c.get("/../../etc/passwd").status_code in (200, 404)
+        assert "root:" not in c.get("/..%2F..%2Fetc%2Fpasswd").text
+
+
+def test_gemini_number_check_unit():
+    facts = {"metrics": {"loss_ha": 12485.6, "pct": 49.4}, "period": {"start_year": 2015}}
+    assert gemini_service.unverified_numbers("Se perdieron 12 486 ha (49,4 %) desde 2015.", facts) == []
+    assert gemini_service.unverified_numbers("Riesgo del 73 %.", facts) == ["73"]
+
+
+def test_gemini_speech_returns_wav_in_requested_language(monkeypatch, tmp_path):
+    import tts_service
+    monkeypatch.setattr(forest_service, "analyze", lambda *a, **k: {
+        **_fake_forest_result(), "summary": None})
+    sent = {}
+
+    class Part:
+        inline_data = types.SimpleNamespace(data=b"\x00\x01" * 2400, mime_type="audio/L16;codec=pcm;rate=24000")
+
+    class FakeModels:
+        def list(self):
+            return [types.SimpleNamespace(name="models/gemini-2.5-flash-preview-tts")]
+
+        def generate_content(self, model, contents, config):
+            sent["model"], sent["text"] = model, contents
+            sent["voice"] = config.speech_config.voice_config.prebuilt_voice_config.voice_name
+            return types.SimpleNamespace(candidates=[types.SimpleNamespace(content=types.SimpleNamespace(parts=[Part]))])
+
+    class FakeClient:
+        def __init__(self, **k):
+            self.models = FakeModels()
+
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", FakeClient)
+    monkeypatch.setitem(tts_service._model, "name", None)
+    app = main.create_app(Settings(gemini_api_key="test-key"), web_dir=tmp_path)
+    with TestClient(app) as c:
+        job = wait(c, c.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
+        rid = job["result"]["result_id"]
+        r = c.post("/api/v1/speech", json={"result_id": rid, "locale": "en"})
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
+        assert r.content[:4] == b"RIFF" and r.content[8:12] == b"WAVE"
+        assert sent["model"] == "gemini-2.5-flash-preview-tts"
+        assert "Read in English" in sent["text"] and "hectares" in sent["text"]  # English text, spelled-out units
+        r_es = c.post("/api/v1/speech", json={"result_id": rid, "locale": "es"})
+        assert r_es.status_code == 200 and "hectáreas" in sent["text"]
+
+
+def test_speech_without_key_is_explicit(client):
+    job = wait(client, client.post("/api/v1/analyses", json={"module": "bosques", "polygon": POLY}).json())
+    r = client.post("/api/v1/speech", json={"result_id": job["result"]["result_id"], "locale": "es"})
+    assert r.status_code == 503 and r.json()["detail"]["kind"] == "not_configured"

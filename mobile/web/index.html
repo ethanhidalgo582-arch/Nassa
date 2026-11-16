@@ -1,46 +1,42 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="IMPACT: analiza pérdida de bosque, hundimiento del terreno y movimiento de glaciares con datos satelitales, explicados en lenguaje sencillo.">
+  <meta name="theme-color" content="#16834a">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="mobile">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="IMPACT">
+  <meta property="og:title" content="IMPACT">
+  <meta property="og:description" content="Observación de cambios en la Tierra con datos satelitales.">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>mobile</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <title>IMPACT · Observación de cambios en la Tierra</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { margin: 0; height: 100%; background: #f3f7f4; }
+    #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #0f2a1f; gap: 18px; }
+    #boot img { width: 96px; height: 96px; animation: spin 6s linear infinite; }
+    #boot p { margin: 0; font-size: 15px; color: #4b5b55; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #boot img { animation: none; } }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="boot" role="status" aria-live="polite">
+    <img src="icons/Icon-192.png" alt="IMPACT">
+    <strong style="font-size:24px;letter-spacing:4px">IMPACT</strong>
+    <p>Cargando aplicación… / Loading app…</p>
+  </div>
+  <noscript>IMPACT necesita JavaScript. / IMPACT requires JavaScript.</noscript>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var b = document.getElementById('boot'); if (b) b.remove();
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

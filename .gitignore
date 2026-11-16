@@ -15,3 +15,20 @@ backend/data/
 # Flutter
 mobile/build/
 mobile/.dart_tool/
+# Plantilla de variables (sí se versiona)
+!.env.example
+.env.*
+!backend/.env.example
+
+# Cachés regenerables y audio/datos temporales
+backend/.cache/
+.pytest_cache/
+*.wav
+backend/*.log
+
+# Flutter: archivos locales/generados por máquina
+mobile/android/local.properties
+mobile/macos/Flutter/ephemeral/
+mobile/linux/flutter/ephemeral/
+mobile/windows/flutter/ephemeral/
+mobile/ios/Flutter/ephemeral/

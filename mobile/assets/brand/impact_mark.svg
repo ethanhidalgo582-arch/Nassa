@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="IMPACT">
+  <defs>
+    <clipPath id="globe"><circle cx="248" cy="268" r="168"/></clipPath>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1fa25c"/>
+      <stop offset="1" stop-color="#11683b"/>
+    </linearGradient>
+  </defs>
+  <!-- orbit, back half -->
+  <path d="M60 330 C 40 250, 200 150, 360 120 C 440 105, 480 130, 470 170" fill="none" stroke="#2f80ed" stroke-width="26" stroke-linecap="round" opacity="0.45"/>
+  <!-- globe -->
+  <circle cx="248" cy="268" r="168" fill="url(#g)"/>
+  <g clip-path="url(#globe)" fill="none" stroke="#ffffff" stroke-linecap="round">
+    <!-- terrain contour lines -->
+    <path d="M70 250 C 130 205, 190 300, 260 250 S 380 205, 430 245" stroke-width="22" opacity="0.95"/>
+    <path d="M70 320 C 140 285, 200 360, 280 318 S 390 290, 430 318" stroke-width="16" opacity="0.7"/>
+    <!-- ice / water band -->
+    <path d="M60 390 C 160 360, 260 420, 440 380 L 440 460 L 60 460 Z" fill="#2f80ed" stroke="none" opacity="0.9"/>
+  </g>
+  <!-- orbit, front half -->
+  <path d="M470 170 C 455 230, 330 330, 170 380 C 110 398, 70 390, 60 330" fill="none" stroke="#2f80ed" stroke-width="26" stroke-linecap="round"/>
+  <!-- satellite -->
+  <g transform="translate(398 104) rotate(35)">
+    <rect x="-58" y="-16" width="38" height="32" rx="5" fill="#2f80ed"/>
+    <rect x="20" y="-16" width="38" height="32" rx="5" fill="#2f80ed"/>
+    <rect x="-20" y="-22" width="40" height="44" rx="9" fill="#0f2a1f" stroke="#ffffff" stroke-width="6"/>
+  </g>
+</svg>

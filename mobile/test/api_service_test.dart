@@ -6,56 +6,60 @@ import 'package:http/testing.dart';
 import 'package:mobile/services/api_service.dart';
 
 void main() {
-  test('consulta la ruta de zonas que ofrece el servidor', () async {
+  test('starts an analysis and polls until done (real stages, no invented progress)', () async {
+    var polls = 0;
     final api = ApiService(
-      baseUrl: 'http://localhost:8000/api/v1/',
-      client: MockClient((request) async {
-        expect(request.url.path, '/api/v1/classified-zones');
-        return http.Response('{"features":[]}', 200);
+      baseUrl: 'http://x/api/v1/',
+      client: MockClient((r) async {
+        if (r.method == 'POST') {
+          expect(r.url.path, '/api/v1/analyses');
+          expect(jsonDecode(r.body)['module'], 'bosques');
+          return http.Response(jsonEncode({'job_id': 'j1', 'status': 'running', 'stage': 'searching'}), 202);
+        }
+        polls++;
+        return http.Response(
+            jsonEncode(polls < 2
+                ? {'job_id': 'j1', 'status': 'running', 'stage': 'processing'}
+                : {'job_id': 'j1', 'status': 'done', 'stage': 'done', 'result': {'result_id': 'r'}}),
+            200);
       }),
     );
-    addTearDown(api.close);
-    expect((await api.getClassifiedZones())['features'], isEmpty);
+    final first = await api.startAnalysis({'module': 'bosques', 'polygon': []});
+    final stages = await api.watch(first, every: Duration.zero).map((s) => s.stage).toList();
+    expect(stages, ['searching', 'processing', 'done']);
   });
 
-  test('envía coordenadas y pregunta, sin clave ni mediciones del cliente', () async {
-    final api = ApiService(client: MockClient((request) async {
-      expect(request.method, 'POST');
-      expect(request.url.path, '/api/v1/ai/analyze');
-      expect(request.headers['content-type'], 'application/json');
-      expect(jsonDecode(request.body), {
-        'latitude': 14.63,
-        'longitude': -90.50,
-        'question': '¿Qué significa?',
-      });
-      expect(request.headers.containsKey('x-goog-api-key'), isFalse);
-      return http.Response('{"analysis":{}}', 200);
+  test('keeps bilingual backend error messages and kinds', () async {
+    final api = ApiService(client: MockClient((r) async => http.Response(
+        jsonEncode({'detail': {'kind': 'no_data', 'message': {'es': 'Sin datos', 'en': 'No data'}, 'retryable': false}}), 422,
+        headers: {'content-type': 'application/json; charset=utf-8'})));
+    try {
+      await api.startAnalysis({});
+      fail('should throw');
+    } on ApiException catch (e) {
+      expect(e.kind, 'no_data');
+      expect(e.message('en'), 'No data');
+      expect(e.message('es'), 'Sin datos');
+    }
+  });
+
+  test('server restart (404) is reported as expired, not as a crash', () async {
+    final api = ApiService(client: MockClient((r) async => http.Response(
+        jsonEncode({'detail': {'kind': 'expired', 'message': {'es': 'expiró', 'en': 'expired'}, 'retryable': true}}), 404,
+        headers: {'content-type': 'application/json; charset=utf-8'})));
+    expect(api.analysis('x'), throwsA(isA<ApiException>().having((e) => e.kind, 'kind', 'expired')));
+  });
+
+  test('non-JSON responses are handled', () async {
+    final api = ApiService(client: MockClient((r) async => http.Response('<html>502</html>', 502)));
+    expect(api.health(), throwsA(isA<ApiException>()));
+  });
+
+  test('no secrets are sent by the client', () async {
+    final api = ApiService(client: MockClient((r) async {
+      expect(r.headers.keys.any((k) => k.toLowerCase().contains('key')), isFalse);
+      return http.Response(jsonEncode({'result_id': 'r', 'locale': 'en', 'answer': {}}), 200);
     }));
-    addTearDown(api.close);
-    await api.analyzeZone(14.63, -90.50, question: ' ¿Qué significa? ');
-  });
-
-  test('conserva los mensajes de error del servidor en español', () async {
-    final api = ApiService(client: MockClient((request) async {
-      return http.Response(
-        jsonEncode({'detail': 'Gemini aún no está configurado.'}),
-        503,
-        headers: {'content-type': 'application/json; charset=utf-8'},
-      );
-    }));
-    addTearDown(api.close);
-    await expectLater(
-      api.analyzeZone(14.63, -90.50),
-      throwsA(isA<ApiException>().having(
-          (error) => error.message, 'message', 'Gemini aún no está configurado.')),
-    );
-  });
-
-  test('maneja una respuesta que no sea JSON', () async {
-    final api = ApiService(client: MockClient((request) async =>
-        http.Response('<html>error</html>', 502)));
-    addTearDown(api.close);
-    await expectLater(api.getHealth(), throwsA(isA<ApiException>()));
+    await api.interpret('r', 'en');
   });
 }
-
