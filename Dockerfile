@@ -9,6 +9,7 @@ RUN git clone --depth 1 --branch 3.50.0 \
 
 ENV PATH="/opt/flutter/bin:${PATH}"
 ENV CI=true
+ENV TAR_OPTIONS=--no-same-owner
 
 RUN flutter --version
 RUN flutter config --no-analytics --enable-web
